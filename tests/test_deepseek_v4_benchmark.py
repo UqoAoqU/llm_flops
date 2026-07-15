@@ -9,6 +9,7 @@ from deepseek_v4_benchmark import (
     MOE_INTERMEDIATE,
     MOE_TOPK,
     BenchmarkRow,
+    _moe_fp8_mxfp8_fn,
     adapter_io_shapes,
     case_context,
     compressed_context,
@@ -50,6 +51,21 @@ class DeepSeekV4BenchmarkTest(unittest.TestCase):
                 "logits=(1024,16384)",
             ),
         )
+
+    def test_fp8_mxfp8_moe_is_one_fused_row(self):
+        self.assertTrue(callable(_moe_fp8_mxfp8_fn))
+        rows = [
+            adapter
+            for adapter in decode_adapters("fp8_mxfp8")
+            if "MoE" in adapter.name
+        ]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(
+            rows[0].backend,
+            "FlashInfer TRTLLM FP8 weight + MXFP8 activation",
+        )
+        self.assertEqual(rows[0].kind, "moe_fp8_mxfp8")
+        self.assertEqual(rows[0].shape, (16, 7168, 3072))
 
     def test_summary_excludes_unavailable_rows(self):
         rows = [

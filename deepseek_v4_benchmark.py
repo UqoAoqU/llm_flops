@@ -512,6 +512,7 @@ def _decode_attention_fn(batch, context, compress_ratio, torch):
 
 
 _MOE_WEIGHT_CACHE = None
+_FP8_MXFP8_MOE_WEIGHT_CACHE = None
 
 
 def _get_moe_weights(torch):
@@ -648,6 +649,141 @@ def _moe_fn(m, torch):
 
     return run
 
+
+def _get_fp8_mxfp8_moe_weights(torch):
+    """Build SGLang's shuffled block-FP8 TRTLLM layout once."""
+    global _FP8_MXFP8_MOE_WEIGHT_CACHE
+    if _FP8_MXFP8_MOE_WEIGHT_CACHE is not None:
+        return _FP8_MXFP8_MOE_WEIGHT_CACHE
+
+    from sglang.srt.layers.moe.moe_runner.flashinfer_trtllm import (
+        align_mxfp8_moe_weights_for_flashinfer_trtllm,
+    )
+
+    e, hidden, intermediate = E_LOCAL, 7168, MOE_INTERMEDIATE
+    layer = torch.nn.Module()
+    layer.w13_weight = torch.nn.Parameter(
+        torch.zeros(
+            e,
+            2 * intermediate,
+            hidden,
+            dtype=torch.float8_e4m3fn,
+            device="cuda",
+        ),
+        requires_grad=False,
+    )
+    layer.w2_weight = torch.nn.Parameter(
+        torch.zeros(
+            e,
+            hidden,
+            intermediate,
+            dtype=torch.float8_e4m3fn,
+            device="cuda",
+        ),
+        requires_grad=False,
+    )
+    layer.w13_weight_scale_inv = torch.nn.Parameter(
+        torch.ones(
+            e,
+            2 * intermediate,
+            hidden // 32,
+            dtype=torch.float8_e8m0fnu,
+            device="cuda",
+        ).view(torch.uint8),
+        requires_grad=False,
+    )
+    layer.w2_weight_scale_inv = torch.nn.Parameter(
+        torch.ones(
+            e,
+            hidden,
+            intermediate // 32,
+            dtype=torch.float8_e8m0fnu,
+            device="cuda",
+        ).view(torch.uint8),
+        requires_grad=False,
+    )
+    align_mxfp8_moe_weights_for_flashinfer_trtllm(layer)
+    _FP8_MXFP8_MOE_WEIGHT_CACHE = (
+        layer.w13_weight,
+        layer.w13_weight_scale_inv,
+        layer.w2_weight,
+        layer.w2_weight_scale_inv,
+    )
+    return _FP8_MXFP8_MOE_WEIGHT_CACHE
+
+
+def _moe_fp8_mxfp8_fn(m, torch):
+    """B200 FP8-weight/MXFP8-activation fused routed-expert fixture."""
+    import flashinfer
+    from flashinfer.fused_moe import (
+        Fp8QuantizationType,
+        trtllm_fp8_block_scale_routed_moe,
+    )
+    from sglang.srt.layers.quantization.mxfp4_flashinfer_trtllm_moe import (
+        PackTopkIds,
+    )
+
+    w13, s13, w2, s2 = _get_fp8_mxfp8_moe_weights(torch)
+    hidden = 7168
+    x = torch.randn(m, hidden, dtype=torch.bfloat16, device="cuda")
+
+    total_pairs = m * MOE_TOPK
+    flat_ids = E_LOCAL + torch.arange(total_pairs, device="cuda") % (
+        E_GLOBAL - E_LOCAL
+    )
+    owned_pairs = local_routed_pairs(m)
+    if owned_pairs:
+        owned_positions = torch.div(
+            torch.arange(owned_pairs, device="cuda") * total_pairs,
+            owned_pairs,
+            rounding_mode="floor",
+        )
+        flat_ids[owned_positions] = torch.arange(
+            owned_pairs, device="cuda"
+        ) % E_LOCAL
+    topk_ids = flat_ids.view(m, MOE_TOPK).to(torch.int32).contiguous()
+    topk_weights = torch.full(
+        (m, MOE_TOPK),
+        1.0 / MOE_TOPK,
+        dtype=torch.float32,
+        device="cuda",
+    )
+    packed_topk = PackTopkIds.vanilla(topk_ids, topk_weights)
+    output = torch.empty(m, hidden, dtype=torch.bfloat16, device="cuda")
+
+    def run():
+        x_quant, x_scale = flashinfer.mxfp8_quantize(
+            x, False, backend="cute-dsl"
+        )
+        x_scale = x_scale.view(torch.uint8).reshape(m, -1)
+        return trtllm_fp8_block_scale_routed_moe(
+            topk_ids=packed_topk,
+            routing_bias=None,
+            hidden_states=x_quant,
+            hidden_states_scale=x_scale,
+            gemm1_weights=w13,
+            gemm1_weights_scale=s13,
+            gemm2_weights=w2,
+            gemm2_weights_scale=s2,
+            num_experts=E_GLOBAL,
+            top_k=MOE_TOPK,
+            n_group=None,
+            topk_group=None,
+            intermediate_size=MOE_INTERMEDIATE,
+            local_expert_offset=0,
+            local_num_experts=E_LOCAL,
+            routed_scaling_factor=1.0,
+            routing_method_type=1,
+            use_shuffled_weight=True,
+            do_finalize=True,
+            output=output,
+            tune_max_num_tokens=1 << (m - 1).bit_length(),
+            fp8_quantization_type=Fp8QuantizationType.MxFp8,
+            activation_type=3,
+        )
+
+    return run
+
 def run_adapter(adapter, m, context, torch, warmup, runs):
     m = adapter.m_override if adapter.m_override is not None else m
     input_shape, output_shape = adapter_io_shapes(adapter, m, context)
@@ -698,6 +834,8 @@ def run_adapter(adapter, m, context, torch, warmup, runs):
         fn = lambda: torch.bmm(x, weight)
     elif adapter.kind == "moe_mxfp4":
         fn = _moe_fn(m, torch)
+    elif adapter.kind == "moe_fp8_mxfp8":
+        fn = _moe_fp8_mxfp8_fn(m, torch)
     elif adapter.kind == "bf16":
         k, n = adapter.shape
         x = torch.randn(m, k, device="cuda", dtype=torch.bfloat16)
