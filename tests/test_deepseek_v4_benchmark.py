@@ -1,5 +1,7 @@
 import unittest
 
+from print_deepseek_v4_quant_comparison import compare_profile_rows
+
 from deepseek_v4_benchmark import (
     ATTN_HEADS,
     E_GLOBAL,
@@ -21,6 +23,39 @@ from deepseek_v4_benchmark import (
 
 
 class DeepSeekV4BenchmarkTest(unittest.TestCase):
+    def test_comparison_requires_matching_cases_and_maps_indexer_names(self):
+        mx_rows = [
+            {
+                "phase": "prefill",
+                "m": "1024",
+                "context": "65536",
+                "operator": "C4 FP4 Paged MQA Logits",
+                "instances": "30",
+                "model_ms": "6.0",
+            }
+        ]
+        fp8_rows = [
+            {
+                "phase": "prefill",
+                "m": "1024",
+                "context": "65536",
+                "operator": "C4 FP8 Paged MQA Logits",
+                "instances": "30",
+                "model_ms": "4.0",
+            }
+        ]
+
+        comparison = compare_profile_rows(mx_rows, fp8_rows)
+        self.assertEqual(comparison.case, ("prefill", 1024, 65536))
+        self.assertEqual(comparison.speedup, 1.5)
+        self.assertEqual(
+            comparison.operators[0].name, "C4 Paged MQA Logits"
+        )
+
+        fp8_rows[0]["context"] = "16384"
+        with self.assertRaisesRegex(ValueError, "case mismatch"):
+            compare_profile_rows(mx_rows, fp8_rows)
+
     def test_quant_profiles_use_distinct_indexer_and_moe_backends(self):
         mx = {adapter.name: adapter for adapter in prefill_adapters("mxfp4")}
         fp8 = {
