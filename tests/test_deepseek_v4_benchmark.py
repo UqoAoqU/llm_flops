@@ -37,6 +37,20 @@ class DeepSeekV4BenchmarkTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unknown quant profile"):
             prefill_adapters("invalid")
 
+    def test_fp8_indexer_shapes_use_c4_context(self):
+        adapters = {
+            adapter.name: adapter for adapter in prefill_adapters("fp8_mxfp8")
+        }
+        self.assertEqual(
+            adapter_io_shapes(
+                adapters["C4 FP8 Paged MQA Logits"], 1024, 65536
+            ),
+            (
+                "q=(1024,1,64,128); raw_kv=65536; c4_kv=16384",
+                "logits=(1024,16384)",
+            ),
+        )
+
     def test_summary_excludes_unavailable_rows(self):
         rows = [
             BenchmarkRow("attention", "FlashMLA", 2, 1.5, "executed", ""),

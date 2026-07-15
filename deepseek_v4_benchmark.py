@@ -113,9 +113,14 @@ def adapter_io_shapes(adapter, m, context):
             f"q={_shape_text(m, 1, ATTN_HEADS, ATTN_HEAD_DIM)}; context={context}",
             f"y={_shape_text(m, 1, ATTN_HEADS, ATTN_HEAD_DIM)}",
         )
-    if adapter.kind == "fp4_quant":
-        return (f"q={_shape_text(m, INDEX_HEADS, INDEX_HEAD_DIM)}", f"q_fp4={_shape_text(m, INDEX_HEADS, INDEX_HEAD_DIM >> 1)}")
-    if adapter.kind == "fp4_logits":
+    if adapter.kind in ("fp4_quant", "fp8_quant"):
+        quantized_dim = INDEX_HEAD_DIM // 2 if adapter.kind == "fp4_quant" else INDEX_HEAD_DIM
+        quantized_name = "q_fp4" if adapter.kind == "fp4_quant" else "q_fp8"
+        return (
+            f"q={_shape_text(m, INDEX_HEADS, INDEX_HEAD_DIM)}",
+            f"{quantized_name}={_shape_text(m, INDEX_HEADS, quantized_dim)}",
+        )
+    if adapter.kind in ("fp4_logits", "fp8_logits"):
         c4_context = compressed_context(context, 4)
         return (
             f"q={_shape_text(m, 1, INDEX_HEADS, INDEX_HEAD_DIM)}; "
@@ -156,7 +161,7 @@ def _profile_adapters(profile):
             Adapter("Routed Expert Fused MoE", "FlashInfer TRTLLM MXFP4", MODEL_LAYERS, (E_LOCAL, 7168, MOE_INTERMEDIATE), "moe_mxfp4"),
         )
     return (
-        Adapter("C4 Indexer FP8 Quant", "SGLang/torch FP8 E4M3", C4_LAYERS, kind="fp8_quant"),
+        Adapter("C4 Indexer FP8 Quant", "SGLang fused RoPE/Hadamard FP8", C4_LAYERS, kind="fp8_quant"),
         Adapter("C4 FP8 Paged MQA Logits", "DeepGEMM fp8_paged_mqa_logits", C4_LAYERS, kind="fp8_logits"),
         Adapter("Routed Expert Fused MoE", "FlashInfer TRTLLM FP8 weight + MXFP8 activation", MODEL_LAYERS, (E_LOCAL, 7168, MOE_INTERMEDIATE), "moe_fp8_mxfp8"),
     )
@@ -272,6 +277,32 @@ def _fp4_quant_fn(batch, context, torch):
     )
 
 
+def _fp8_quant_fn(batch, context, torch):
+    from sglang.jit_kernel.dsv4 import fused_q_indexer_rope_hadamard_quant
+    from sglang.srt.layers.deepseek_v4_rope import precompute_freqs_cis
+
+    q = torch.randn(
+        batch,
+        INDEX_HEADS,
+        INDEX_HEAD_DIM,
+        device="cuda",
+        dtype=torch.bfloat16,
+    )
+    weights = torch.randn(
+        batch, INDEX_HEADS, device="cuda", dtype=torch.bfloat16
+    )
+    positions = torch.full(
+        (batch,), context - 1, device="cuda", dtype=torch.int32
+    )
+    freqs = precompute_freqs_cis(64, context + 1, 0, 10000, 1, 32, 1).to(
+        "cuda"
+    )
+    weight_scale = INDEX_HEAD_DIM**-0.5 * INDEX_HEADS**-0.5
+    return lambda: fused_q_indexer_rope_hadamard_quant(
+        q, weights, weight_scale, freqs, positions
+    )
+
+
 def _fp4_logits_fn(batch, context, torch):
     import deep_gemm
     from deep_gemm.utils import per_token_cast_to_fp4
@@ -317,6 +348,63 @@ def _fp4_logits_fn(batch, context, torch):
         clean_logits=False,
         logits_dtype=torch.float32,
         indices=None,
+    )
+
+
+def _fp8_logits_fn(batch, context, torch):
+    import deep_gemm
+    from sglang.jit_kernel.dsa import deepgemm_paged_mqa_logits_split
+    from sglang.srt.layers.attention.dsa.utils import (
+        fp8_mqa_logits_make_fused_kv,
+    )
+
+    blocks_per_sequence = (context + PAGE_SIZE - 1) // PAGE_SIZE
+    num_blocks = batch * blocks_per_sequence
+    page_table = torch.arange(
+        num_blocks, dtype=torch.int32, device="cuda"
+    ).view(batch, blocks_per_sequence)
+    context_lens = torch.full(
+        (batch,), context, dtype=torch.int32, device="cuda"
+    )
+    context_lens_2d = context_lens.unsqueeze(-1)
+    schedule = deep_gemm.get_paged_mqa_logits_metadata(
+        context_lens_2d, PAGE_SIZE, deep_gemm.get_num_sms()
+    )
+    q_fp8 = torch.ones(
+        batch,
+        INDEX_HEADS,
+        INDEX_HEAD_DIM,
+        dtype=torch.float8_e4m3fn,
+        device="cuda",
+    )
+    kv_fp8 = torch.ones(
+        num_blocks,
+        PAGE_SIZE,
+        INDEX_HEAD_DIM,
+        dtype=torch.float8_e4m3fn,
+        device="cuda",
+    )
+    kv_scale = torch.ones(
+        num_blocks, PAGE_SIZE, dtype=torch.float32, device="cuda"
+    )
+    kv_fused = fp8_mqa_logits_make_fused_kv(
+        kv_fp8, kv_scale, PAGE_SIZE, INDEX_HEAD_DIM
+    )
+    del kv_fp8, kv_scale
+    weights = torch.randn(
+        batch, INDEX_HEADS, device="cuda", dtype=torch.float32
+    )
+
+    return lambda: deepgemm_paged_mqa_logits_split(
+        deep_gemm.fp8_paged_mqa_logits,
+        q_fp8,
+        kv_fused,
+        weights,
+        context_lens_2d,
+        page_table,
+        schedule,
+        context,
+        q_offset=batch,
     )
 
 
@@ -595,8 +683,12 @@ def run_adapter(adapter, m, context, torch, warmup, runs):
         fn = _decode_attention_fn(m, context, 128, torch)
     elif adapter.kind == "fp4_quant":
         fn = _fp4_quant_fn(m, context, torch)
+    elif adapter.kind == "fp8_quant":
+        fn = _fp8_quant_fn(m, context, torch)
     elif adapter.kind == "fp4_logits":
         fn = _fp4_logits_fn(m, compressed_context(context, 4), torch)
+    elif adapter.kind == "fp8_logits":
+        fn = _fp8_logits_fn(m, compressed_context(context, 4), torch)
     elif adapter.kind == "topk":
         fn = _topk_fn(m, compressed_context(context, 4), torch)
     elif adapter.kind == "grouped_bf16":
