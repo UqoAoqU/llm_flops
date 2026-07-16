@@ -1,0 +1,153 @@
+"""Strict, safe schema-v1 suite parsing."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+
+import yaml
+
+
+class SuiteValidationError(ValueError):
+    """A stable suite schema error."""
+
+    def __init__(self, code: str, path: Path, field: str, message: str) -> None:
+        self.code = code
+        self.path = Path(path)
+        self.field = field
+        self.message = message
+        super().__init__(f"suite.{code}: {self.path} [{field}]: {message}")
+
+
+@dataclass(frozen=True)
+class SuiteConfig:
+    schema_version: int
+    suite_id: str
+    operator_include: tuple[str, ...]
+    operator_exclude: tuple[str, ...]
+    case_tags: tuple[str, ...]
+    mode: str
+    correctness_seeds: tuple[int, ...]
+    performance_samples: int
+    performance_inner_iterations: int
+
+
+def _fail(code: str, path: Path, field: str, message: str) -> None:
+    raise SuiteValidationError(code, path, field, message)
+
+
+def _mapping(value: object, path: Path, field: str) -> dict[str, object]:
+    if not isinstance(value, dict) or not all(isinstance(key, str) for key in value):
+        _fail("type", path, field, "must be a string-keyed mapping")
+    return value
+
+
+def _fields(
+    value: dict[str, object],
+    path: Path,
+    field: str,
+    required: frozenset[str],
+) -> None:
+    missing = required.difference(value)
+    unknown = set(value).difference(required)
+    if missing:
+        _fail("missing_field", path, field, f"missing {', '.join(sorted(missing))}")
+    if unknown:
+        _fail("unknown_field", path, field, f"unknown {', '.join(sorted(unknown))}")
+
+
+def _string(value: object, path: Path, field: str) -> str:
+    if not isinstance(value, str) or not value:
+        _fail("type", path, field, "must be a non-empty string")
+    return value
+
+
+def _strings(value: object, path: Path, field: str) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        _fail("type", path, field, "must be a list of strings")
+    result = tuple(_string(item, path, f"{field}[]") for item in value)
+    if len(set(result)) != len(result):
+        _fail("value", path, field, "must not contain duplicates")
+    return result
+
+
+def _integer(value: object, path: Path, field: str, *, positive: bool = False) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        _fail("type", path, field, "must be an integer")
+    if positive and value <= 0:
+        _fail("value", path, field, "must be positive")
+    return value
+
+
+def load_suite(path: Path) -> SuiteConfig:
+    """Load a suite with ``yaml.safe_load`` and an exact schema."""
+
+    path = Path(path)
+    try:
+        value = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, yaml.YAMLError) as error:
+        _fail("yaml", path, "$", f"cannot load YAML: {error}")
+    root = _mapping(value, path, "$")
+    required = frozenset(
+        {
+            "schema_version",
+            "suite_id",
+            "operators",
+            "cases",
+            "mode",
+            "correctness",
+            "performance",
+        }
+    )
+    _fields(root, path, "$", required)
+    version = _integer(root["schema_version"], path, "schema_version")
+    if version != 1:
+        _fail("schema_version", path, "schema_version", f"unsupported version {version}")
+
+    operators = _mapping(root["operators"], path, "operators")
+    _fields(operators, path, "operators", frozenset({"include", "exclude"}))
+    cases = _mapping(root["cases"], path, "cases")
+    _fields(cases, path, "cases", frozenset({"tags"}))
+    correctness = _mapping(root["correctness"], path, "correctness")
+    _fields(correctness, path, "correctness", frozenset({"seeds"}))
+    performance = _mapping(root["performance"], path, "performance")
+    _fields(
+        performance,
+        path,
+        "performance",
+        frozenset({"samples", "inner_iterations"}),
+    )
+    mode = _string(root["mode"], path, "mode")
+    if mode not in {"all", "correctness", "performance"}:
+        _fail("value", path, "mode", "must be all, correctness, or performance")
+    seeds_value = correctness["seeds"]
+    if not isinstance(seeds_value, list):
+        _fail("type", path, "correctness.seeds", "must be a list of integers")
+    seeds = tuple(
+        _integer(seed, path, "correctness.seeds[]") for seed in seeds_value
+    )
+    if not seeds:
+        _fail("value", path, "correctness.seeds", "must not be empty")
+    if len(set(seeds)) != len(seeds):
+        _fail("value", path, "correctness.seeds", "must not contain duplicates")
+    return SuiteConfig(
+        schema_version=version,
+        suite_id=_string(root["suite_id"], path, "suite_id"),
+        operator_include=_strings(operators["include"], path, "operators.include"),
+        operator_exclude=_strings(operators["exclude"], path, "operators.exclude"),
+        case_tags=_strings(cases["tags"], path, "cases.tags"),
+        mode=mode,
+        correctness_seeds=seeds,
+        performance_samples=_integer(
+            performance["samples"], path, "performance.samples", positive=True
+        ),
+        performance_inner_iterations=_integer(
+            performance["inner_iterations"],
+            path,
+            "performance.inner_iterations",
+            positive=True,
+        ),
+    )
+
+
+__all__ = ["SuiteConfig", "SuiteValidationError", "load_suite"]

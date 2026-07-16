@@ -16,7 +16,13 @@ def write_reference(repository: Path, operator_id: str = OPERATOR_ID) -> Path:
         "def operator(left, right):\n    return left + right\n", encoding="utf-8"
     )
     (root / "spec.py").write_text(
+        "from benchmark_engine.models import CaseSpec\n"
         f'class Spec:\n    operator_id = "{operator_id}"\n'
+        "    def cases(self):\n"
+        "        return (CaseSpec(case_id='small', symbols={'size': 2}, "
+        "seed=0, tags=frozenset({'smoke', 'representative'})), "
+        "CaseSpec(case_id='large', symbols={'size': 8}, seed=0, "
+        "tags=frozenset({'boundary', 'full'})))\n"
         "SPEC = Spec()\ndef cost_model(*args, **kwargs):\n    return None\n",
         encoding="utf-8",
     )

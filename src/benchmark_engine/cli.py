@@ -1,19 +1,29 @@
-"""Import-free registry commands for the benchmark engine."""
+"""Registry, environment, and Phase-3 dry-run planning commands."""
 
 from __future__ import annotations
 
 import argparse
 import fnmatch
+import json
 import sys
 from collections.abc import Sequence
 from pathlib import Path
 
 from . import __version__
-from .registry import FilesystemRegistry, RegistryIssue, RegistrySnapshot
+from .config import DEFAULT_OUTPUT_ROOT
+from .engine import build_dry_run_plan
+from .environment import collect_report
+from .registry import (
+    FilesystemRegistry,
+    RegistryIssue,
+    RegistrySnapshot,
+    selected_registry_issues,
+)
+from .selectors import Selectors
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Build the Phase 2 parser without exposing future execution commands."""
+    """Build the Phase 3 CLI parser."""
 
     parser = argparse.ArgumentParser(
         prog="bench",
@@ -42,6 +52,31 @@ def build_parser() -> argparse.ArgumentParser:
     validate_parser.add_argument(
         "--operator", default="*", metavar="GLOB", help="operator ID glob"
     )
+
+    env_parser = commands.add_parser("env", help="collect the benchmark environment")
+    env_parser.add_argument("--json", action="store_true", help="emit stable JSON")
+
+    run_parser = commands.add_parser("run", help="plan a suite evaluation")
+    run_parser.add_argument("--suite", required=True, metavar="ID")
+    run_parser.add_argument("--dry-run", action="store_true")
+    run_parser.add_argument("--operator", action="append", default=[], metavar="GLOB")
+    run_parser.add_argument("--candidate", action="append", default=[], metavar="GLOB")
+    run_parser.add_argument("--case", action="append", default=[], metavar="GLOB")
+    run_parser.add_argument("--tag", action="append", default=[], metavar="TAG")
+    run_parser.add_argument(
+        "--exclude-operator", action="append", default=[], metavar="GLOB"
+    )
+    run_parser.add_argument("--seed", action="append", default=[], type=int)
+    run_parser.add_argument(
+        "--mode", choices=("all", "correctness", "performance")
+    )
+    run_parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
+    run_parser.add_argument("--evaluation-id")
+    run_parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="allow an existing evaluation path (recovery starts in Phase 4)",
+    )
     return parser
 
 
@@ -58,57 +93,6 @@ def _selected_operators(snapshot: RegistrySnapshot, pattern: str) -> tuple[str, 
     )
 
 
-def _issue_owner(
-    issue: RegistryIssue, repository_root: Path
-) -> tuple[str | None, str | None]:
-    """Return an issue's lexical ``(operator, candidate)`` path ownership.
-
-    Paths outside the two registry roots, or paths without an operator
-    component, are global.  This intentionally inspects path components rather
-    than performing a substring match.  It also avoids resolving an issue path,
-    because resolving a rejected symlink could erase its registry ownership.
-    """
-
-    try:
-        relative = issue.path.relative_to(repository_root)
-    except ValueError:
-        return None, None
-    parts = relative.parts
-    if len(parts) < 3 or parts[0] != "operators":
-        return None, None
-    if parts[1] == "references":
-        return parts[2], None
-    if parts[1] == "candidates":
-        candidate_id = parts[3] if len(parts) >= 4 else None
-        return parts[2], candidate_id
-    return None, None
-
-
-def _selected_issues(
-    snapshot: RegistrySnapshot,
-    repository_root: Path,
-    operator_ids: Sequence[str],
-    candidate_glob: str | None = None,
-) -> tuple[RegistryIssue, ...]:
-    selected = frozenset(operator_ids)
-    applicable: list[RegistryIssue] = []
-    for issue in snapshot.issues:
-        operator_id, candidate_id = _issue_owner(issue, repository_root)
-        if operator_id is None:
-            applicable.append(issue)
-        elif operator_id not in selected:
-            continue
-        elif (
-            candidate_id is not None
-            and candidate_glob is not None
-            and not fnmatch.fnmatchcase(candidate_id, candidate_glob)
-        ):
-            continue
-        else:
-            applicable.append(issue)
-    return tuple(applicable)
-
-
 def _run_list(
     snapshot: RegistrySnapshot,
     repository_root: Path,
@@ -119,8 +103,11 @@ def _run_list(
     if not selected:
         print(f"selector matched no operators: {operator_glob}", file=sys.stderr)
         return 2
-    issues = _selected_issues(
-        snapshot, repository_root, selected, candidate_glob
+    issues = selected_registry_issues(
+        snapshot,
+        selected,
+        candidate_patterns=(candidate_glob,),
+        repository_root=repository_root,
     )
     if issues:
         _print_issues(issues)
@@ -156,7 +143,9 @@ def _run_validate(
     if not selected:
         print(f"selector matched no operators: {operator_glob}", file=sys.stderr)
         return 2
-    issues = _selected_issues(snapshot, repository_root, selected)
+    issues = selected_registry_issues(
+        snapshot, selected, repository_root=repository_root
+    )
     if issues:
         _print_issues(issues)
         return 2
@@ -176,7 +165,60 @@ def main(
     arguments = build_parser().parse_args(argv)
     if arguments.command is None:
         return 0
-    registry = FilesystemRegistry(repository_root or Path.cwd())
+    root = Path(repository_root or Path.cwd()).resolve()
+    if arguments.command == "env":
+        try:
+            report = collect_report(root / "requirements" / "benchmark-lock.json")
+        except (OSError, KeyError, TypeError, ValueError) as error:
+            print(f"environment error: {error}", file=sys.stderr)
+            return 2
+        if arguments.json:
+            print(json.dumps(report, indent=2, sort_keys=True))
+        else:
+            observed = report["environment"]
+            assert isinstance(observed, dict)
+            gpu = observed.get("gpu", {})
+            assert isinstance(gpu, dict)
+            print(f"Benchmark environment: {report['fingerprint']}")
+            print(f"Python {observed.get('python')}  CUDA {observed.get('cuda')}")
+            print(f"GPU {gpu.get('name')}  capability={gpu.get('capability')}")
+            for error in report["errors"]:
+                print(f"ERROR: {error}")
+        return 0
+    if arguments.command == "run":
+        if not arguments.dry_run:
+            print(
+                "execution not available until later phase; use --dry-run",
+                file=sys.stderr,
+            )
+            return 2
+        output_root = arguments.output_root
+        if not output_root.is_absolute():
+            output_root = root / output_root
+        try:
+            plan = build_dry_run_plan(
+                root,
+                arguments.suite,
+                Selectors(
+                    operators=tuple(arguments.operator),
+                    candidates=tuple(arguments.candidate),
+                    cases=tuple(arguments.case),
+                    tags=tuple(arguments.tag),
+                    exclude_operators=tuple(arguments.exclude_operator),
+                ),
+                output_root=output_root,
+                mode=arguments.mode,
+                seeds=tuple(arguments.seed),
+                evaluation_id=arguments.evaluation_id,
+                resume=arguments.resume,
+            )
+        except (OSError, KeyError, TypeError, ValueError) as error:
+            print(str(error), file=sys.stderr)
+            return 2
+        print(json.dumps(plan.to_dict(), indent=2, sort_keys=True))
+        return 0
+
+    registry = FilesystemRegistry(root)
     snapshot = registry.discover()
     if arguments.command == "list":
         return _run_list(

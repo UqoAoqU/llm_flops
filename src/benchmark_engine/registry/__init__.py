@@ -12,6 +12,7 @@ from .base import (
     RegistrySnapshot,
 )
 from .filesystem import FilesystemRegistry
+from .issues import registry_issue_owner, selected_registry_issues
 from .validation import (
     ManifestValidationError,
     SourceHashError,
@@ -36,4 +37,6 @@ __all__ = [
     "compute_source_hash",
     "parse_candidate_manifest",
     "parse_operator_manifest",
+    "registry_issue_owner",
+    "selected_registry_issues",
 ]

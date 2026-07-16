@@ -135,6 +135,7 @@ class RegistrySnapshot:
     operator_specs: Mapping[str, OperatorSpecMetadata] = field(default_factory=dict)
     discovered_operator_ids: tuple[str, ...] = ()
     issues: tuple[RegistryIssue, ...] = ()
+    repository_root: Path | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "references", _immutable_mapping(self.references))
@@ -158,6 +159,8 @@ class RegistrySnapshot:
             self, "discovered_operator_ids", tuple(self.discovered_operator_ids)
         )
         object.__setattr__(self, "issues", tuple(self.issues))
+        if self.repository_root is not None:
+            object.__setattr__(self, "repository_root", Path(self.repository_root))
 
     @property
     def is_valid(self) -> bool:

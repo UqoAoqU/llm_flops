@@ -17,17 +17,24 @@ The package boundaries are:
 - `correctness`: future comparators and correctness gates.
 - `performance`: future timers, sampling, statistics, and performance gates.
 - `reporting`: future atomic artifacts and CSV indexes.
-- `environment`: future environment snapshots and fingerprints.
+- `environment`: adapters that reuse the legacy collector and fingerprints.
 - `projection`: optional per-call to model-level projections.
 
-Phase 2 implements the registry boundary and safe source/result identity paths.
-Execution, worker imports, planning, correctness, performance, profiling, and
-Nsight integration remain deferred.
+Phase 3 implements strict suites, selectors, resolved per-job configuration,
+environment identity, and deterministic plans. Execution, artifacts, workers,
+correctness, performance, profiling, and Nsight integration remain deferred.
 
-The lifecycle begins with `FilesystemRegistry` scanning references and
-candidates. It parses YAML with `safe_load`, statically resolves entrypoint
-module files, hashes source trees, and publishes a frozen snapshot. A later
-worker will perform imports only after planning and isolation exist.
+The lifecycle is suite/config load -> static registry discovery and validation
+-> trusted reference-spec metadata import -> selector expansion -> immutable
+`EvaluationPlan`. Only the reference `spec_entrypoint` may be imported by the
+controller; candidate modules are never imported. Each job carries its complete
+JSON-safe resolved configuration and final result/evaluation identities.
+
+`bench run --dry-run` hashes normalized lock-file contents to obtain a
+`provisional/dry-run` planning fingerprint. It deliberately does not collect
+the environment, import torch, initialize CUDA, create result directories, or
+write formal artifacts. A later execution phase replaces that provisional
+identity with the real fingerprint returned by the shared legacy collector.
 
 Candidate source directories mirror result directories by operator and
 candidate ID. Evaluation directories add a third validated identity component;

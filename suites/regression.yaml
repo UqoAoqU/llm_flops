@@ -1,0 +1,13 @@
+schema_version: 1
+suite_id: regression
+operators:
+  include: ["*"]
+  exclude: ["*_experimental"]
+cases:
+  tags: [representative]
+mode: all
+correctness:
+  seeds: [0, 1, 2]
+performance:
+  samples: 30
+  inner_iterations: 20

@@ -1,0 +1,13 @@
+schema_version: 1
+suite_id: full
+operators:
+  include: ["*"]
+  exclude: []
+cases:
+  tags: [smoke, representative, boundary, stress, adversarial, full]
+mode: all
+correctness:
+  seeds: [0, 1, 2]
+performance:
+  samples: 50
+  inner_iterations: 20

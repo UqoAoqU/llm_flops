@@ -1,0 +1,52 @@
+"""Adapter over the legacy benchmark environment collector."""
+
+from __future__ import annotations
+
+import importlib
+from pathlib import Path
+from typing import Any
+
+
+def _legacy() -> Any:
+    # One implementation owns dependency/GPU version semantics.
+    return importlib.import_module("benchmark_environment")
+
+
+def load_lock(path: Path | None = None) -> dict[str, Any]:
+    legacy = _legacy()
+    return legacy.load_lock() if path is None else legacy.load_lock(Path(path))
+
+
+def collect_environment(
+    lock: dict[str, Any], *, include_cuda: bool = True
+) -> dict[str, Any]:
+    return _legacy().collect_environment(lock, include_cuda=include_cuda)
+
+
+def validate_environment(
+    lock: dict[str, Any], observed: dict[str, Any]
+) -> list[str]:
+    return _legacy().validate_environment(lock, observed)
+
+
+def collect_report(lock_path: Path) -> dict[str, object]:
+    from .fingerprint import environment_fingerprint
+
+    lock = load_lock(lock_path)
+    observed = collect_environment(lock)
+    errors = validate_environment(lock, observed)
+    return {
+        "fingerprint": environment_fingerprint(observed),
+        "fingerprint_kind": "runtime",
+        "valid": not errors,
+        "errors": errors,
+        "environment": observed,
+    }
+
+
+__all__ = [
+    "collect_environment",
+    "collect_report",
+    "load_lock",
+    "validate_environment",
+]

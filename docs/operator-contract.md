@@ -36,3 +36,9 @@ Unknown fields and unknown schema versions are errors. Entrypoints use
 `<module>:<attribute>`. Discovery only checks that the corresponding `.py`
 file is below the reference root; it never imports that module. See the
 [copyable CPU example](examples/minimal-operator/operator.yaml).
+
+In Phase 3, the trusted `spec_entrypoint` object exposes
+`cases() -> tuple[CaseSpec, ...]`. Cases are pure metadata: they declare case
+IDs, symbols, default seeds, and tags, and must not import torch or construct
+tensors. Shapes, tolerances, and reference semantics remain operator-owned and
+cannot be redefined by a suite.

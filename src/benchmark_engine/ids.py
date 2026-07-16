@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime
+import hashlib
+import secrets
+from collections.abc import Callable
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -18,6 +21,8 @@ EVALUATION_ID_PATTERN = re.compile(
     r"(?P<environment>[0-9a-f]{8,64})__"
     r"(?P<run>[a-z0-9][a-z0-9_-]{2,79})$"
 )
+RUN_ID_PATTERN = re.compile(r"^run_[0-9a-f]{16,64}$")
+RESULT_ID_PATTERN = re.compile(r"^res_[0-9a-f]{24,64}$")
 
 
 class IdentifierError(ValueError):
@@ -83,6 +88,71 @@ def validate_evaluation_id(evaluation_id: object) -> str:
         )
     _validate_utc_timestamp(match.group("timestamp"), "evaluation_id")
     return value
+
+
+def validate_run_id(run_id: object) -> str:
+    value = _reject_path_syntax(run_id, "run_id")
+    if RUN_ID_PATTERN.fullmatch(value) is None:
+        raise IdentifierError("run_id must match ^run_[0-9a-f]{16,64}$")
+    return value
+
+
+def validate_result_id(result_id: object) -> str:
+    value = _reject_path_syntax(result_id, "result_id")
+    if RESULT_ID_PATTERN.fullmatch(value) is None:
+        raise IdentifierError("result_id must match ^res_[0-9a-f]{24,64}$")
+    return value
+
+
+def utc_timestamp(now: Callable[[], datetime] | None = None) -> str:
+    value = (now or (lambda: datetime.now(timezone.utc)))()
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+def generate_run_id(random_hex: Callable[[int], str] | None = None) -> str:
+    """Generate a globally unique run ID with an injectable random source."""
+
+    value = f"run_{(random_hex or secrets.token_hex)(16)}"
+    return validate_run_id(value)
+
+
+def generate_evaluation_id(
+    environment_fingerprint: str,
+    run_id: str,
+    *,
+    now: Callable[[], datetime] | None = None,
+) -> str:
+    validate_run_id(run_id)
+    if re.fullmatch(r"[0-9a-f]{8,64}", environment_fingerprint) is None:
+        raise IdentifierError("environment fingerprint must be 8-64 lowercase hex")
+    run_short = run_id.removeprefix("run_")[:12]
+    return validate_evaluation_id(
+        f"{utc_timestamp(now)}__{environment_fingerprint[:12]}__{run_short}"
+    )
+
+
+def generate_result_id(
+    operator_id: str,
+    candidate_id: str,
+    evaluation_id: str,
+    case_id: str,
+    seed: int,
+) -> str:
+    """Return a stable ID for an operator/candidate/evaluation/case/seed row."""
+
+    validate_operator_id(operator_id)
+    validate_candidate_id(candidate_id)
+    validate_evaluation_id(evaluation_id)
+    if not isinstance(case_id, str) or not case_id:
+        raise IdentifierError("case_id must be a non-empty string")
+    if isinstance(seed, bool) or not isinstance(seed, int):
+        raise IdentifierError("seed must be an integer")
+    encoded = "\0".join(
+        (operator_id, candidate_id, evaluation_id, case_id, str(seed))
+    ).encode("utf-8")
+    return validate_result_id(f"res_{hashlib.sha256(encoded).hexdigest()[:32]}")
 
 
 def _safe_child(root: Path, *components: str) -> Path:

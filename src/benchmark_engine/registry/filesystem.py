@@ -377,6 +377,7 @@ class FilesystemRegistry:
         for operator_id in references:
             sorted_candidates.setdefault(operator_id, ())
         snapshot = RegistrySnapshot(
+            repository_root=self.repository_root,
             references=dict(sorted(references.items())),
             candidates=dict(sorted(sorted_candidates.items())),
             operator_manifests=dict(sorted(operator_manifests.items())),

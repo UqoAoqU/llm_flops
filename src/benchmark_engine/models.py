@@ -14,6 +14,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Literal
 
+from .config import ResolvedEvaluationConfig
+
 
 _TYPE_KEY = "__benchmark_engine_type__"
 
@@ -541,12 +543,18 @@ class EvaluationJob:
     case: CaseSpec
     mode: Literal["all", "correctness", "performance"]
     output_dir: Path
+    result_id: str = ""
+    resolved_config: ResolvedEvaluationConfig = field(
+        default_factory=ResolvedEvaluationConfig
+    )
 
     def __post_init__(self) -> None:
         if self.mode not in {"all", "correctness", "performance"}:
             raise ValueError("mode must be all, correctness, or performance")
         if not isinstance(self.output_dir, Path):
             raise TypeError("output_dir must be a pathlib.Path")
+        if not isinstance(self.resolved_config, ResolvedEvaluationConfig):
+            raise TypeError("resolved_config must be ResolvedEvaluationConfig")
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -556,6 +564,8 @@ class EvaluationJob:
             "case": self.case.to_dict(),
             "mode": self.mode,
             "output_dir": str(self.output_dir),
+            "result_id": self.result_id,
+            "resolved_config": self.resolved_config.to_dict(),
         }
 
     @classmethod
@@ -573,6 +583,7 @@ class EvaluationJob:
                     "output_dir",
                 }
             ),
+            optional=frozenset({"result_id", "resolved_config"}),
         )
         mode = _string(data["mode"], "EvaluationJob.mode")
         if mode not in {"all", "correctness", "performance"}:
@@ -592,6 +603,14 @@ class EvaluationJob:
             output_dir=Path(
                 _string(data["output_dir"], "EvaluationJob.output_dir")
             ),
+            result_id=_string(data.get("result_id", ""), "EvaluationJob.result_id"),
+            resolved_config=(
+                ResolvedEvaluationConfig()
+                if "resolved_config" not in data
+                else ResolvedEvaluationConfig.from_dict(
+                    _mapping(data["resolved_config"], "EvaluationJob.resolved_config")
+                )
+            ),
         )
 
 
@@ -601,6 +620,8 @@ class EvaluationPlan:
     mode: Literal["all", "correctness", "performance"]
     jobs: tuple[EvaluationJob, ...]
     environment_fingerprint: str
+    suite_id: str = ""
+    fingerprint_kind: str = "runtime"
 
     def __post_init__(self) -> None:
         if self.mode not in {"all", "correctness", "performance"}:
@@ -616,6 +637,8 @@ class EvaluationPlan:
             "mode": self.mode,
             "jobs": [job.to_dict() for job in self.jobs],
             "environment_fingerprint": self.environment_fingerprint,
+            "suite_id": self.suite_id,
+            "fingerprint_kind": self.fingerprint_kind,
         }
 
     @classmethod
@@ -626,6 +649,7 @@ class EvaluationPlan:
             required=frozenset(
                 {"run_id", "mode", "jobs", "environment_fingerprint"}
             ),
+            optional=frozenset({"suite_id", "fingerprint_kind"}),
         )
         mode = _string(data["mode"], "EvaluationPlan.mode")
         if mode not in {"all", "correctness", "performance"}:
@@ -640,5 +664,10 @@ class EvaluationPlan:
             environment_fingerprint=_string(
                 data["environment_fingerprint"],
                 "EvaluationPlan.environment_fingerprint",
+            ),
+            suite_id=_string(data.get("suite_id", ""), "EvaluationPlan.suite_id"),
+            fingerprint_kind=_string(
+                data.get("fingerprint_kind", "runtime"),
+                "EvaluationPlan.fingerprint_kind",
             ),
         )
