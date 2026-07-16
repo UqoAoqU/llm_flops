@@ -2,9 +2,75 @@
 
 GLM-5 模型各算子的 CUDA 性能测试工具集，基于 DeepGEMM、sgl_kernel、FlashMLA 等底层库，使用 CUDA Graph 精确计时。
 
-## 依赖
+## 可复现运行环境
 
-- SGLang镜像sglang:v0.5.10，下载地址：https://hub.docker.com/r/lmsysorg/sglang/tags
+项目不打包虚拟环境或依赖源码。`bootstrap.sh` 根据
+`requirements/benchmark-lock.json` 在项目内创建被 Git 忽略的
+`.runtime/venv`，并联网安装与基准数据一致的 PyTorch、SGLang、
+SGL Kernel、DeepGEMM 和 FlashInfer。当前环境要求为 Linux x86_64、
+Python 3.12、CUDA 13 和 NVIDIA B200 (SM100)。
+
+```bash
+./bootstrap.sh
+./run.sh check
+CUDA_VISIBLE_DEVICES=0 ./run.sh smoke
+```
+
+`check` 会校验版本、GPU capability 和实际用到的后端符号，并输出环境
+指纹。正式 DeepSeek CSV 的每一行都记录同一个指纹；环境不匹配或任一
+算子不可用时，正式命令返回非零状态。
+
+### 单算子测试
+
+所有原始脚本仍可通过 `.runtime/venv/bin/python <script>.py` 直接运行，
+也可以使用统一入口：
+
+```bash
+./run.sh op dsa_indexer
+./run.sh op dsa_flashmla
+./run.sh op dsa_projection
+./run.sh op mla_flashmla
+./run.sh op moe_deepgemm
+```
+
+`dsa_projection` 和 `moe_deepgemm` 的静态 FP8 fixture 与整体 baseline
+一致，量化准备不计入算子时间。`mla_flashmla.py` 使用的传统 dense MLA
+接口只支持 SM90a；B200 smoke 和 DeepSeek Decode 使用 SGL Kernel 的
+SM100 `FlashMLASchedMeta` 接口。
+
+### DeepSeek V4 Pro 整体测试
+
+```bash
+./run.sh prefill --quant-profile fp8_mxfp8 \
+  --m 1024,2048,4096 --context 65536 \
+  --warmup 5 --runs 20 \
+  --csv results/deepseek_v4_pro_fp8_mxfp8_prefill_kv65536.csv
+
+./run.sh decode --quant-profile fp8_mxfp8 \
+  --m 16,32 --context 65536 \
+  --warmup 5 --runs 20 \
+  --csv results/deepseek_v4_pro_fp8_mxfp8_decode_kv65536.csv
+
+./run.sh compare
+```
+
+将 `--quant-profile` 改为 `mxfp4` 即可运行冻结 baseline。Prefill 的
+`--m` 是 query sequence length，Decode 的 `--m` 是 batch size；
+`--context 65536` 是未压缩 KV 长度。
+
+### 打包
+
+`.runtime/`、下载缓存和 JIT 产物不会进入 Git。提交需要分发的源码后，
+生成小型源码包：
+
+```bash
+git archive --format=tar.gz --prefix=llm_flops/ \
+  -o /tmp/llm_flops.tar.gz HEAD
+```
+
+对方解压后只需执行 `./bootstrap.sh`。若确实需要包含未提交的本地改动，
+先使用 `git diff --binary > local-changes.patch` 单独保存并随包分发，避免
+把 `.runtime/` 误打进压缩包。
 
 ## 模型参数
 
