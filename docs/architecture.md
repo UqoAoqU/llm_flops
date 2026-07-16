@@ -11,7 +11,8 @@ stable status enums survive a JSON round trip.
 
 The package boundaries are:
 
-- `registry`: future manifest discovery and validation.
+- `registry`: strict manifest discovery, static entrypoint checks, and source
+  hashing. It returns immutable controller metadata and never imports modules.
 - `execution`: future controller and subprocess worker infrastructure.
 - `correctness`: future comparators and correctness gates.
 - `performance`: future timers, sampling, statistics, and performance gates.
@@ -19,10 +20,15 @@ The package boundaries are:
 - `environment`: future environment snapshots and fingerprints.
 - `projection`: optional per-call to model-level projections.
 
-Only package boundaries exist in Phase 1. Registry behavior, execution,
-profiling, and Nsight integration are intentionally deferred.
+Phase 2 implements the registry boundary and safe source/result identity paths.
+Execution, worker imports, planning, correctness, performance, profiling, and
+Nsight integration remain deferred.
 
-The planned lifecycle is discovery, validation, deterministic planning,
-isolated correctness execution, gated performance execution, and atomic
-reporting. Candidate source directories will mirror their result directories;
-the approved design defines the complete contract.
+The lifecycle begins with `FilesystemRegistry` scanning references and
+candidates. It parses YAML with `safe_load`, statically resolves entrypoint
+module files, hashes source trees, and publishes a frozen snapshot. A later
+worker will perform imports only after planning and isolation exist.
+
+Candidate source directories mirror result directories by operator and
+candidate ID. Evaluation directories add a third validated identity component;
+there is no run-ID result root.

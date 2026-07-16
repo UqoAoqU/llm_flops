@@ -1,0 +1,23 @@
+schema_version: 1
+operator_id: minimal_cpu_add
+contract_version: 1
+description: Add two Python numbers on the CPU.
+reference_entrypoint: implementation:operator
+spec_entrypoint: spec:SPEC
+device_types: [cpu]
+tags: [example, cpu]
+correctness:
+  default_comparator: exact
+  rtol: 0.0
+  atol: 0.0
+  equal_nan: false
+  determinism_repeats: 1
+performance:
+  timer: wall_clock
+  graph_mode: disabled
+  warmup: 1
+  samples: 3
+  inner_iterations: 1
+  timeout_s: 30
+  regression_threshold_pct: 5.0
+cost_model: spec:cost_model
