@@ -39,6 +39,36 @@ results/
             └── stderr.log
 ```
 
+Phase 5 stores the strict worker request/response and controller diagnostics
+under `diagnostics/`. Full exception tracebacks are diagnostic text files;
+`results.csv` and the response protocol contain only a short message plus a
+relative diagnostic path. Worker failures do not rewrite a previously durable
+result row.
+
+`logs/worker.jsonl` records schema-v1 events in lifecycle order:
+`DISCOVERED`, `WORKER_STARTED`, paired import/build/correctness/warmup/sampling
+events, `REPORT_WRITTEN`, and `WORKER_EXITED`. Long active stages may insert
+`HEARTBEAT` records. In Phase 5 the correctness, warmup, and sampling pairs end
+with `status=skipped`; they must not be interpreted as measured results.
+`controller.jsonl` records the supervisor outcome and truncation flags.
+Both JSONL files append one result transcript/record within the evaluation;
+running a later case must not erase an earlier case. Event sequence numbers are
+continuous across the evaluation and each `result_id` still has a complete,
+independently valid lifecycle.
+
+Retries of the same `result_id` are separate attempts. Every `DISCOVERED`
+record starts one attempt transcript, even when its identity and result ID
+match an earlier transcript. Request/response/controller-diagnostic filenames
+include a monotonically increasing per-result attempt number, so a crash can
+never consume or overwrite a prior successful response.
+
+Stdout and stderr are drained continuously to prevent a verbose candidate or
+compiler from blocking on a full pipe. Each formal log has a configured byte
+limit and receives an explicit truncation marker when exceeded. Console/in-
+memory summaries have a smaller independent bound. The stdout/stderr byte cap
+applies to the whole evaluation, not separately to each case, and the
+truncation marker is written at most once.
+
 Initialization records a mirrored evaluation in `run_index.csv`, allowing an
 interrupted run to be found. `history.csv` receives exactly one row only after
 the evaluation reaches `complete`; `latest.json` is atomically replaced last
@@ -67,5 +97,6 @@ values in `results.csv` are returned as complete work and conflicting rows may
 not replace them. See [CSV schema v1](csv-schema.md).
 
 Formal text, JSON, and CSV mutations use a same-directory temporary file,
-flush/fsync, and atomic replacement. The controller is the only writer; Phase
-4 intentionally does not add workers or concurrent evaluators.
+flush/fsync, and atomic replacement. The controller remains the only formal
+artifact/CSV writer; workers write only their dedicated response, diagnostic,
+and append-only event channels.

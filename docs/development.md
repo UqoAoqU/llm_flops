@@ -25,7 +25,7 @@ FlashInfer, and XDG caches under `.runtime/cache`.
 
 ## Verification
 
-Phase 1 changes should pass:
+Every phase should pass:
 
 ~~~bash
 .runtime/venv/bin/python -m unittest discover -s tests -v
@@ -35,3 +35,18 @@ git diff --check
 
 Do not add generated runtime, cache, log, or benchmark result artifacts to Git.
 Do not change legacy command behavior as part of an engine-only change.
+
+Phase 5 execution tests are Linux-sensitive because they validate sessions,
+signals, process groups, segfault classification, and recursive child cleanup:
+
+~~~bash
+.runtime/venv/bin/python -m unittest -v \
+  tests/test_worker_protocol.py \
+  tests/test_controller_isolation.py \
+  tests/test_worker_failures.py \
+  tests/test_event_log.py
+~~~
+
+Keep fixture timeouts short and always allow the controller to perform its
+TERM/KILL/reap cleanup. Fixtures belong under `tests/fixtures/workers/`; never
+place crash/hang fixtures in the production operator registry.

@@ -1,9 +1,10 @@
 # Benchmark Engine documentation
 
 The benchmark engine is being introduced alongside the existing DeepSeek V4
-and GLM-5 launchers. Through Phase 4 it provides strict discovery,
-deterministic plans, and recoverable mirrored artifacts. It does not yet
-execute operators.
+and GLM-5 launchers. Through Phase 5 it provides strict discovery,
+deterministic plans, recoverable mirrored artifacts, and an isolated
+import/build worker skeleton. Correctness and performance semantics are not
+implemented yet.
 
 ## Guides
 
@@ -17,6 +18,8 @@ execute operators.
   tables.
 - [ADR 0001](adr/0001-result-directory-key.md) records the result directory key.
 - [Development](development.md) covers environment setup and verification.
+- [Troubleshooting](troubleshooting.md) explains worker outcomes, timeout
+  cleanup, diagnostics, and bounded logs.
 - [Approved design](../design.md) is the normative long-form design.
 - [Migration baseline](migration-baseline.md) records the preserved legacy
   behavior.

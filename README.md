@@ -5,7 +5,8 @@ DeepSeek V4 Pro Prefill、Decode 及各算子的 CUDA 性能测试。底层后�
 ## Benchmark Engine
 
 新的 benchmark engine 正在与现有 DeepSeek V4 和 GLM-5 入口并行建设。
-Phase 1 提供可安装的 `benchmark_engine` 包、JSON-safe 核心模型以及两个等价入口：
+当前 engine 提供可安装的 `benchmark_engine` 包、静态 Registry、确定性 dry-run
+计划、可恢复 artifact，以及隔离 import/build 的 Controller/Worker 骨架：
 
 ~~~bash
 ./bootstrap.sh
@@ -13,7 +14,9 @@ Phase 1 提供可安装的 `benchmark_engine` 包、JSON-safe 核心模型以及
 ./bench.sh --help
 ~~~
 
-本阶段 CLI 仅提供帮助与版本信息；Registry、执行、正确性和性能流程将在后续阶段实现。
+`bench list`、`bench validate`、`bench env` 与 `bench run --dry-run` 已可用。
+Phase 5 的 worker API 会明确跳过 correctness/performance；完整非 dry-run CLI
+要到 Phase 7 才开放，因此当前 `bench run` 不带 `--dry-run` 仍返回退出码 2。
 架构与开发约定见 [文档索引](docs/index.md)，完整方案见
 [批准的设计](design.md)，贡献要求见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 下文所有 legacy 用法保持不变。
