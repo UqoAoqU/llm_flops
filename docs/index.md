@@ -1,8 +1,9 @@
 # Benchmark Engine documentation
 
 The benchmark engine is being introduced alongside the existing DeepSeek V4
-and GLM-5 launchers. Phase 2 adds strict, import-free filesystem discovery,
-source identities, and mirrored result paths. It does not execute operators.
+and GLM-5 launchers. Through Phase 4 it provides strict discovery,
+deterministic plans, and recoverable mirrored artifacts. It does not yet
+execute operators.
 
 ## Guides
 
@@ -12,6 +13,8 @@ source identities, and mirrored result paths. It does not execute operators.
 - [Operator contract](operator-contract.md) defines `operator.yaml` schema v1.
 - [Candidate guide](candidate-guide.md) defines candidate layout and hashing.
 - [Result layout](result-layout.md) defines source/result mirroring.
+- [CSV schema v1](csv-schema.md) defines result, output, sample, and index
+  tables.
 - [ADR 0001](adr/0001-result-directory-key.md) records the result directory key.
 - [Development](development.md) covers environment setup and verification.
 - [Approved design](../design.md) is the normative long-form design.

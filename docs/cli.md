@@ -28,10 +28,16 @@ bench run --suite regression --dry-run \
 `--seed` are repeatable. Values within one selector category are ORed;
 different categories are ANDed; excludes apply last. `--mode` overrides the
 suite. `--output-root`, `--evaluation-id` (exactly one selected candidate), and
-`--resume` affect planning only. An existing evaluation path is rejected unless
-`--resume` is present; recovery is implemented in Phase 4.
+`--resume` affect planning. An existing evaluation path is rejected unless
+`--resume` is present. Phase 4 provides the durable run-index/manifest resume
+reader used by the later execution CLI; because execution is still deferred,
+non-dry `bench run` continues to exit 2 and does not mutate artifacts yet.
 
 Dry-run prints stable-key JSON and has no formal filesystem side effects. Its
 environment fingerprint is explicitly marked `provisional/dry-run` and is a
 SHA-256 of normalized dependency-lock contents. A non-dry run exits 2 with
 `execution not available until later phase`.
+
+Artifact writers are currently a Python API for the future controller. Their
+state and compatibility rules are documented in [Result layout](result-layout.md)
+and [CSV schema v1](csv-schema.md); no Phase 4 CLI command bypasses those rules.

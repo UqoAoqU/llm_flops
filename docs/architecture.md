@@ -16,12 +16,14 @@ The package boundaries are:
 - `execution`: future controller and subprocess worker infrastructure.
 - `correctness`: future comparators and correctness gates.
 - `performance`: future timers, sampling, statistics, and performance gates.
-- `reporting`: future atomic artifacts and CSV indexes.
+- `reporting`: schema-v1 CSV tables, atomic artifacts, mirrored indexes, and
+  resume discovery. The controller is the sole formal writer.
 - `environment`: adapters that reuse the legacy collector and fingerprints.
 - `projection`: optional per-call to model-level projections.
 
 Phase 3 implements strict suites, selectors, resolved per-job configuration,
-environment identity, and deterministic plans. Execution, artifacts, workers,
+environment identity, and deterministic plans. Phase 4 adds the durable
+reporting boundary but deliberately does not execute a candidate. Workers,
 correctness, performance, profiling, and Nsight integration remain deferred.
 
 The lifecycle is suite/config load -> static registry discovery and validation
@@ -39,3 +41,14 @@ identity with the real fingerprint returned by the shared legacy collector.
 Candidate source directories mirror result directories by operator and
 candidate ID. Evaluation directories add a third validated identity component;
 there is no run-ID result root.
+
+The reporting lifecycle is initialization (`planned`, manifest, empty tables,
+logs, run index), transition to `running`, then one terminal state. An
+`interrupted` compatible evaluation may resume at `running`; `failed` and
+`complete` remain terminal. Only `complete` publishes candidate `history.csv`
+and monotonic `latest.json`. All formal
+updates replace a flushed same-directory temporary file; duplicate row keys
+are idempotent only when the complete row is identical. Resume validates the
+durable manifest before returning the set of already completed `result_id`
+values. The authoritative layouts and fields are in
+[Result layout](result-layout.md) and [CSV schema v1](csv-schema.md).
