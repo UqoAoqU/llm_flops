@@ -84,14 +84,20 @@ def cast_to_fp8_per_tensor(x: torch.Tensor):
 # ── GEMM benchmark (DeepGEMM FP8) ──
 
 def bench_gemm(M: int, K: int, N: int, device: torch.device):
-    x_bf16 = torch.randn(M, K, dtype=torch.bfloat16, device=device)
-    x_fp8, x_scale = per_token_cast_to_fp8(x_bf16)
-    x_scale = get_mn_major_tma_aligned_tensor(x_scale)
-    del x_bf16
-
-    w_bf16 = torch.randn(N, K, dtype=torch.bfloat16, device=device)
-    w_fp8, w_scale = per_block_cast_to_fp8(w_bf16)
-    del w_bf16
+    # Match the end-to-end baseline: static quantization is excluded from GEMM
+    # timing and SM100 scale factors use UE8M0-representable unit values.
+    x_fp8 = torch.randn(M, K, dtype=torch.bfloat16, device=device).to(
+        torch.float8_e4m3fn
+    )
+    x_scale = get_mn_major_tma_aligned_tensor(
+        torch.ones(M, K // 128, dtype=torch.float32, device=device)
+    )
+    w_fp8 = torch.randn(N, K, dtype=torch.bfloat16, device=device).to(
+        torch.float8_e4m3fn
+    )
+    w_scale = torch.ones(
+        (N + 127) // 128, K // 128, dtype=torch.float32, device=device
+    )
 
     out = torch.empty(M, N, dtype=torch.bfloat16, device=device)
 
@@ -302,4 +308,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

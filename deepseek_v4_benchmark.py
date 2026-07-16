@@ -5,6 +5,12 @@ import csv
 from dataclasses import dataclass
 from pathlib import Path
 
+from benchmark_environment import (
+    collect_environment,
+    environment_fingerprint,
+    load_lock,
+)
+
 
 C4_LAYERS = 30
 C128_LAYERS = 30
@@ -868,6 +874,45 @@ def run_adapter(adapter, m, context, torch, warmup, runs):
     )
 
 
+def result_exit_code(rows):
+    return 1 if any(row.status != "executed" for row in rows) else 0
+
+
+def write_result_csv(path, phase, profile, m, context, rows, fingerprint):
+    summary = summarize_rows(rows)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="") as output_file:
+        writer = csv.writer(output_file)
+        writer.writerow(
+            (
+                "phase", "quant_profile", "environment_fingerprint", "m",
+                "context", "operator", "backend", "instances", "call_ms",
+                "model_ms", "pct", "status", "input_shape", "output_shape",
+                "error",
+            )
+        )
+        for row in rows:
+            writer.writerow(
+                (
+                    phase,
+                    profile,
+                    fingerprint,
+                    m,
+                    context,
+                    row.name,
+                    row.backend,
+                    row.instances,
+                    "" if row.call_ms is None else f"{row.call_ms:.6f}",
+                    "" if row.call_ms is None else f"{row.instances * row.call_ms:.6f}",
+                    f"{summary.percent_by_name.get(row.name, 0):.4f}",
+                    row.status,
+                    row.input_shape,
+                    row.output_shape,
+                    row.error,
+                )
+            )
+
+
 def main(phase):
     parser = argparse.ArgumentParser(
         description=f"DeepSeek-V4-Pro {phase} local backend benchmark"
@@ -887,6 +932,9 @@ def main(phase):
     args = parser.parse_args()
 
     import torch
+
+    fingerprint = environment_fingerprint(collect_environment(load_lock()))
+    all_rows = []
 
     for m in map(int, args.m.split(",")):
         context = case_context(phase, m, args.context)
@@ -918,9 +966,10 @@ def main(phase):
                 )
 
         summary = summarize_rows(rows)
+        all_rows.extend(rows)
         print(
             f"DeepSeek-V4-Pro {phase}: profile={args.quant_profile}, M={m}, "
-            f"measured_partial_total={summary.total_ms:.4f} ms"
+            f"environment={fingerprint}, measured_partial_total={summary.total_ms:.4f} ms"
         )
         for row in rows:
             latency = "-" if row.call_ms is None else f"{row.call_ms:.6f}"
@@ -939,32 +988,7 @@ def main(phase):
             if "," not in args.m
             else args.csv.with_name(f"{args.csv.stem}_m{m}{args.csv.suffix}")
         )
-        output_path.parent.mkdir(exist_ok=True)
-        with output_path.open("w", newline="") as output_file:
-            writer = csv.writer(output_file)
-            writer.writerow(
-                (
-                    "phase", "quant_profile", "m", "context", "operator", "backend", "instances",
-                    "call_ms", "model_ms", "pct", "status", "input_shape",
-                    "output_shape", "error",
-                )
-            )
-            for row in rows:
-                writer.writerow(
-                    (
-                        phase,
-                        args.quant_profile,
-                        m,
-                        context,
-                        row.name,
-                        row.backend,
-                        row.instances,
-                        "" if row.call_ms is None else f"{row.call_ms:.6f}",
-                        "" if row.call_ms is None else f"{row.instances * row.call_ms:.6f}",
-                        f"{summary.percent_by_name.get(row.name, 0):.4f}",
-                        row.status,
-                        row.input_shape,
-                        row.output_shape,
-                        row.error,
-                    )
-                )
+        write_result_csv(
+            output_path, phase, args.quant_profile, m, context, rows, fingerprint
+        )
+    return result_exit_code(all_rows)

@@ -1,4 +1,7 @@
+import csv
+import tempfile
 import unittest
+from pathlib import Path
 
 from print_deepseek_v4_quant_comparison import compare_profile_rows
 
@@ -19,10 +22,27 @@ from deepseek_v4_benchmark import (
     prefill_adapters,
     summarize_rows,
     local_routed_pairs,
+    result_exit_code,
+    write_result_csv,
 )
 
 
 class DeepSeekV4BenchmarkTest(unittest.TestCase):
+    def test_result_csv_records_environment_fingerprint(self):
+        row = BenchmarkRow("attention", "FlashMLA", 2, 1.5, "executed", "")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "result.csv"
+            write_result_csv(path, "prefill", "fp8_mxfp8", 16, 512, [row], "abc123")
+            with path.open(newline="") as source:
+                rows = list(csv.DictReader(source))
+        self.assertEqual(rows[0]["environment_fingerprint"], "abc123")
+
+    def test_unavailable_row_fails_formal_result(self):
+        executed = BenchmarkRow("attention", "FlashMLA", 2, 1.5, "executed", "")
+        unavailable = BenchmarkRow("moe", "FlashInfer", 61, None, "unavailable", "missing")
+        self.assertEqual(result_exit_code([executed]), 0)
+        self.assertEqual(result_exit_code([executed, unavailable]), 1)
+
     def test_comparison_requires_matching_cases_and_maps_indexer_names(self):
         mx_rows = [
             {

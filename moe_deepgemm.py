@@ -107,16 +107,26 @@ def make_grouped_gemm_tensors(m_per_expert: list, K: int, N: int, device: torch.
                  for m in m_per_expert]
     total_m = sum(aligned_m)
 
-    x_bf16 = torch.randn(total_m, K, dtype=torch.bfloat16, device=device)
-    x_fp8, x_scale = per_token_cast_to_fp8(x_bf16)
-    x_scale = get_mn_major_tma_aligned_tensor(x_scale)
+    # Match the end-to-end baseline fixture: quantization is static and outside
+    # the timed region, with UE8M0-representable unit scales on SM100.
+    x_fp8 = torch.randn(total_m, K, dtype=torch.bfloat16, device=device).to(
+        torch.float8_e4m3fn
+    )
+    x_scale = get_mn_major_tma_aligned_tensor(
+        torch.ones(total_m, K // 128, dtype=torch.float32, device=device)
+    )
 
-    w_bf16 = torch.randn(num_groups, N, K, dtype=torch.bfloat16, device=device)
     n_ceil = (N + 127) // 128 * 128
-    w_fp8 = torch.empty(num_groups, N, K, dtype=torch.float8_e4m3fn, device=device)
-    w_scale = torch.empty(num_groups, n_ceil // 128, K // 128, dtype=torch.float32, device=device)
-    for i in range(num_groups):
-        w_fp8[i], w_scale[i] = per_block_cast_to_fp8(w_bf16[i])
+    w_fp8 = torch.randn(
+        num_groups, N, K, dtype=torch.bfloat16, device=device
+    ).to(torch.float8_e4m3fn)
+    w_scale = torch.ones(
+        num_groups,
+        n_ceil // 128,
+        K // 128,
+        dtype=torch.float32,
+        device=device,
+    )
 
     out = torch.empty(total_m, N, dtype=torch.bfloat16, device=device)
 
