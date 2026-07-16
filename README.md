@@ -15,8 +15,10 @@ DeepSeek V4 Pro Prefill、Decode 及各算子的 CUDA 性能测试。底层后�
 ~~~
 
 `bench list`、`bench validate`、`bench env` 与 `bench run --dry-run` 已可用。
-Phase 5 的 worker API 会明确跳过 correctness/performance；完整非 dry-run CLI
-要到 Phase 7 才开放，因此当前 `bench run` 不带 `--dry-run` 仍返回退出码 2。
+Phase 6 已提供 worker 内使用的输入隔离、输出标准化、Comparator 与正确性
+Evaluator API；它尚未接入 CLI。完整非 dry-run CLI 要到 Phase 7 才开放，
+因此当前 `bench run` 不带 `--dry-run` 仍返回退出码 2。正确性契约见
+[correctness guide](docs/correctness.md)。
 架构与开发约定见 [文档索引](docs/index.md)，完整方案见
 [批准的设计](design.md)，贡献要求见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 下文所有 legacy 用法保持不变。

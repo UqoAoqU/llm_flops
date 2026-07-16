@@ -37,8 +37,19 @@ Unknown fields and unknown schema versions are errors. Entrypoints use
 file is below the reference root; it never imports that module. See the
 [copyable CPU example](examples/minimal-operator/operator.yaml).
 
-In Phase 3, the trusted `spec_entrypoint` object exposes
-`cases() -> tuple[CaseSpec, ...]`. Cases are pure metadata: they declare case
-IDs, symbols, default seeds, and tags, and must not import torch or construct
-tensors. Shapes, tolerances, and reference semantics remain operator-owned and
-cannot be redefined by a suite.
+The trusted `spec_entrypoint` implements `OperatorSpec` and declares its stable
+`operator_id: str`: `cases()`,
+`make_inputs()`, `clone_inputs()`, `normalize_output()`, `comparator()`, and
+`cost_model()`. Controller-side planning imports only `cases()` metadata and
+still rejects torch imports there. Runtime methods execute inside an isolated
+worker; tensor objects never enter the JSON protocol.
+
+`make_inputs(case, context)` receives explicit seeded CPU/CUDA generators and
+returns `benchmark_engine.correctness.InputBundle`. `clone_inputs()` must
+produce physically isolated tensor storage and mutable containers while
+preserving aliases within one bundle. Any state changed in-place must be
+registered in `observed_state`, otherwise it is outside the correctness
+contract. `normalize_output()` maps implementation-specific return values to
+the reference's semantic output before deterministic leaf normalization.
+
+See [Correctness](correctness.md) for comparator and tolerance requirements.

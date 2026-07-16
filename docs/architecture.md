@@ -15,7 +15,8 @@ The package boundaries are:
   hashing. It returns immutable controller metadata and never imports modules.
 - `execution`: strict JSON protocol, managed subprocess worker, process-group
   cleanup, stage timeouts, bounded logs, and structured lifecycle events.
-- `correctness`: future comparators and correctness gates.
+- `correctness`: runtime-only input bundles, output normalization, comparators,
+  bounded diagnostics, and the reference/candidate evaluator.
 - `performance`: future timers, sampling, statistics, and performance gates.
 - `reporting`: schema-v1 CSV tables, atomic artifacts, mirrored indexes, and
   resume discovery. The controller is the sole formal writer.
@@ -25,9 +26,17 @@ The package boundaries are:
 Phase 3 implements strict suites, selectors, resolved per-job configuration,
 environment identity, and deterministic plans. Phase 4 adds the durable
 reporting boundary. Phase 5 executes only the import/build skeleton in a
-managed worker. Correctness comparison and performance measurement remain
-deferred; their stage events are explicitly recorded as `skipped` rather than
+managed worker. Phase 6 implements correctness as an independent worker-local
+library but deliberately does not change the wire schema or CLI; Phase 7
+performs that integration. Performance stages remain `skipped` rather than
 being reported as successful benchmark work.
+
+Runtime `correctness.InputBundle` and normalized leaf values may contain
+tensors and must remain in the worker. They are separate from the JSON-safe
+metadata models in `benchmark_engine.models`. The evaluator constructs a
+canonical seeded input once, creates storage-isolated reference/candidate
+clones, synchronizes touched CUDA devices after each call, normalizes return
+values and observed mutable state, then applies the reference-owned comparator.
 
 The lifecycle is suite/config load -> static registry discovery and validation
 -> trusted reference-spec metadata import -> selector expansion -> immutable

@@ -1,10 +1,10 @@
 # Benchmark Engine documentation
 
 The benchmark engine is being introduced alongside the existing DeepSeek V4
-and GLM-5 launchers. Through Phase 5 it provides strict discovery,
-deterministic plans, recoverable mirrored artifacts, and an isolated
-import/build worker skeleton. Correctness and performance semantics are not
-implemented yet.
+and GLM-5 launchers. Through Phase 6 it provides strict discovery,
+deterministic plans, recoverable mirrored artifacts, isolated workers, and
+worker-local correctness semantics. The evaluator is connected to the CLI in
+Phase 7; performance measurement is not implemented yet.
 
 ## Guides
 
@@ -12,6 +12,8 @@ implemented yet.
   staged evaluation lifecycle.
 - [Registry CLI](cli.md) documents `bench list` and `bench validate`.
 - [Operator contract](operator-contract.md) defines `operator.yaml` schema v1.
+- [Correctness](correctness.md) defines runtime inputs, normalized outputs,
+  comparators, tolerances, diagnostics, and determinism checks.
 - [Candidate guide](candidate-guide.md) defines candidate layout and hashing.
 - [Result layout](result-layout.md) defines source/result mirroring.
 - [CSV schema v1](csv-schema.md) defines result, output, sample, and index

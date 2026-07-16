@@ -50,3 +50,20 @@ signals, process groups, segfault classification, and recursive child cleanup:
 Keep fixture timeouts short and always allow the controller to perform its
 TERM/KILL/reap cleanup. Fixtures belong under `tests/fixtures/workers/`; never
 place crash/hang fixtures in the production operator registry.
+
+Phase 6 correctness algorithms have a CPU-only mandatory suite:
+
+~~~bash
+.runtime/venv/bin/python -m unittest -v \
+  tests/test_input_bundle.py \
+  tests/test_output_normalization.py \
+  tests/test_exact_comparator.py \
+  tests/test_floating_comparator.py \
+  tests/test_topk_comparator.py \
+  tests/test_quantized_comparator.py \
+  tests/test_correctness_evaluator.py
+~~~
+
+The evaluator test contains a real CUDA allocation/synchronization smoke when
+CUDA is available and otherwise skips only that method. Correctness unit tests
+must not require a GPU.
