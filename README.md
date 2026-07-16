@@ -1,8 +1,115 @@
-# GLM-5 Operator Performance Benchmarks
+# DeepSeek V4 Pro Operator Performance Benchmarks
 
-GLM-5 模型各算子的 CUDA 性能测试工具集，基于 DeepGEMM、sgl_kernel、FlashMLA 等底层库，使用 CUDA Graph 精确计时。
+DeepSeek V4 Pro Prefill、Decode 及各算子的 CUDA 性能测试。底层后端包括 DeepGEMM、SGL Kernel、FlashMLA 和 FlashInfer，计时使用 CUDA Graph。
 
-## DeepSeek V4 Pro Benchmark
+## DeepSeek V4 Pro 配置
+
+| 参数 | 值 |
+|------|-----|
+| Transformer layers | 61 |
+| C4 layers | 30 |
+| C128 layers | 30 |
+| Dense/SWA layers | 1 |
+| Hidden size | 7168 |
+| Q LoRA rank | 1536 |
+| Attention heads | 128 |
+| Attention head dim | 512 |
+| Indexer heads | 64 |
+| Indexer head dim | 128 |
+| Indexer TopK | 1024 |
+| Global experts | 384 |
+| Expert parallel size | 24 |
+| Local experts | 16 |
+| Experts per token | 6 |
+| MoE intermediate size | 3072 |
+| Attention/Indexer tensor parallel | 不切分 |
+
+原始 KV 长度固定为 65536。C4 和 C128 层对应的 KV 长度分别为 16384 和 512。
+
+## Prefill 阶段
+
+Prefill 中 `M=seq_Q`，测试 case 为：
+
+| `seq_Q` | 原始 `seq_KV` | C4 `seq_KV` | C128 `seq_KV` |
+|---------|---------------|-------------|---------------|
+| 1024 | 65536 | 16384 | 512 |
+| 2048 | 65536 | 16384 | 512 |
+| 4096 | 65536 | 16384 | 512 |
+
+Prefill 不包含 KV append。执行链为：
+
+1. Q/KV 投影。
+2. C4/C128 Compressor。
+3. C4 Indexer Q/Head 投影、量化、Paged MQA Logits 和 TopK。
+4. 60 个稀疏 Attention 层和 1 个 Dense/SWA Attention 层。
+5. WO_A、WO_B 输出投影。
+6. 61 层 Routed Expert Fused MoE。
+7. LM Head。
+
+## Decode 阶段
+
+Decode 中 `M=batch_size`，每个 request 处理一个 query token。测试 case 为：
+
+| batch size | 原始 `seq_KV` | C4 `seq_KV` | C128 `seq_KV` |
+|------------|---------------|-------------|---------------|
+| 16 | 65536 | 16384 | 512 |
+| 32 | 65536 | 16384 | 512 |
+
+Decode 不执行 Compressor。执行链为：
+
+1. Q/KV 投影。
+2. C4 Indexer Q/Head 投影、量化、Paged MQA Logits 和 TopK。
+3. 30 个 C4 dual-cache Attention、30 个 C128 dual-cache Attention 和 1 个 Dense/SWA Attention。
+4. WO_A、WO_B 输出投影。
+5. 61 层 Routed Expert Fused MoE。
+6. LM Head。
+
+## DeepSeek V4 Pro 算子测试
+
+以下算子表对应 `fp8_mxfp8` quant profile。
+
+### Prefill 算子
+
+下表 shape 使用 `seq_Q=1024`、原始 `seq_KV=65536`：
+
+| 算子 | 次数 | 后端 | 输入 | 输出 |
+|------|-----:|------|------|------|
+| Fused WQ_A + WKV | 61 | DeepGEMM FP8 GEMM | `x=(1024,7168)`, `w=(2048,7168)` | `(1024,2048)` |
+| Q RMSNorm + WQ_B | 61 | DeepGEMM FP8 GEMM | `x=(1024,1536)`, `w=(65536,1536)` | `(1024,65536)` |
+| Compressor C4 | 30 | DeepGEMM FP8 GEMM | `x=(1024,7168)`, `w=(2048,7168)` | `(1024,2048)` |
+| Compressor C128 | 30 | DeepGEMM FP8 GEMM | `x=(1024,7168)`, `w=(1024,7168)` | `(1024,1024)` |
+| C4 Indexer Q Projection | 30 | DeepGEMM FP8 GEMM | `x=(1024,1536)`, `w=(65536,1536)` | `(1024,65536)` |
+| C4 Indexer Head Weight | 30 | cuBLAS BF16 GEMM | `x=(1024,7168)`, `w=(64,7168)` | `(1024,64)` |
+| C4 Indexer FP8 Quant | 30 | SGLang fused RoPE/Hadamard FP8 | `q=(1024,64,128)` | `q_fp8=(1024,64,128)` |
+| C4 FP8 Paged MQA Logits | 30 | DeepGEMM `fp8_paged_mqa_logits` | `q=(1024,1,64,128)`, `kv=16384` | `logits=(1024,16384)` |
+| C4 TopK Transform | 30 | SGLang JIT | `scores=(1024,16384)` | `indices=(1024,1024)` |
+| Sparse Prefill Attention | 60 | SGL Kernel FlashMLA | `q=(1024,128,512)`, `kv=(65536,1,512)`, `indices=(1024,1,1024)` | `(1024,128,512)` |
+| Dense SWA Attention | 1 | SGL Kernel FlashMLA | `q=(1024,128,512)`, `kv=(65536,1,512)`, `indices=(1024,1,128)` | `(1024,128,512)` |
+| WO_A Grouped Projection | 61 | cuBLAS BF16 BMM | `x=(1024,16,4096)`, `w=(16,4096,1024)` | `(1024,16,1024)` |
+| WO_B Projection | 61 | DeepGEMM FP8 GEMM | `x=(1024,16384)`, `w=(7168,16384)` | `(1024,7168)` |
+| Routed Expert Fused MoE | 61 | FlashInfer TRTLLM FP8/MXFP8 | `x=(1024,7168)`, `topk=(1024,6)`, `local_pairs=256`, `w13=(16,6144,7168)`, `w2=(16,7168,3072)` | `(1024,7168)` |
+| LM Head | 1 | DeepGEMM FP8 GEMM | `x=(1024,7168)`, `w=(129280,7168)` | `(1024,129280)` |
+
+### Decode 算子
+
+下表 shape 使用 `batch_size=16`、原始 `seq_KV=65536`：
+
+| 算子 | 次数 | 后端 | 输入 | 输出 |
+|------|-----:|------|------|------|
+| Fused WQ_A + WKV | 61 | DeepGEMM FP8 GEMM | `x=(16,7168)`, `w=(2048,7168)` | `(16,2048)` |
+| Q RMSNorm + WQ_B | 61 | DeepGEMM FP8 GEMM | `x=(16,1536)`, `w=(65536,1536)` | `(16,65536)` |
+| C4 Indexer Q Projection | 30 | DeepGEMM FP8 GEMM | `x=(16,1536)`, `w=(65536,1536)` | `(16,65536)` |
+| C4 Indexer Head Weight | 30 | cuBLAS BF16 GEMM | `x=(16,7168)`, `w=(64,7168)` | `(16,64)` |
+| C4 Indexer FP8 Quant | 30 | SGLang fused RoPE/Hadamard FP8 | `q=(16,64,128)` | `q_fp8=(16,64,128)` |
+| C4 FP8 Paged MQA Logits | 30 | DeepGEMM `fp8_paged_mqa_logits` | `q=(16,1,64,128)`, `kv=16384` | `logits=(16,16384)` |
+| C4 TopK Transform | 30 | SGLang JIT | `scores=(16,16384)` | `indices=(16,1024)` |
+| Sparse Decode Attention C4 | 30 | SGL Kernel FlashMLA dual-cache | `q=(16,1,128,512)`, `context=65536` | `(16,1,128,512)` |
+| Sparse Decode Attention C128 | 30 | SGL Kernel FlashMLA dual-cache | `q=(16,1,128,512)`, `context=65536` | `(16,1,128,512)` |
+| Dense SWA Attention | 1 | SGL Kernel FlashMLA | `q=(16,1,128,512)`, `context=65536` | `(16,1,128,512)` |
+| WO_A Grouped Projection | 61 | cuBLAS BF16 BMM | `x=(16,16,4096)`, `w=(16,4096,1024)` | `(16,16,1024)` |
+| WO_B Projection | 61 | DeepGEMM FP8 GEMM | `x=(16,16384)`, `w=(7168,16384)` | `(16,7168)` |
+| Routed Expert Fused MoE | 61 | FlashInfer TRTLLM FP8/MXFP8 | `x=(16,7168)`, `topk=(16,6)`, `local_pairs=4`, `w13=(16,6144,7168)`, `w2=(16,7168,3072)` | `(16,7168)` |
+| LM Head | 1 | DeepGEMM FP8 GEMM | `x=(16,7168)`, `w=(129280,7168)` | `(16,129280)` |
 
 ### 环境版本
 
@@ -28,27 +135,7 @@ CUDA_VISIBLE_DEVICES=0 ./run.sh smoke
 
 环境目录：`.runtime/venv`
 
-### 单算子命令
-
-```bash
-./run.sh op dsa_indexer
-./run.sh op dsa_flashmla
-./run.sh op dsa_projection
-./run.sh op mla_flashmla
-./run.sh op moe_deepgemm
-```
-
-对应脚本：
-
-| 命令名 | 脚本 |
-|--------|------|
-| `dsa_indexer` | `dsa_indexer.py` |
-| `dsa_flashmla` | `dsa_flashmla.py` |
-| `dsa_projection` | `dsa_projection.py` |
-| `mla_flashmla` | `mla_flashmla.py` |
-| `moe_deepgemm` | `moe_deepgemm.py` |
-
-### Prefill
+### Prefill 运行
 
 ```bash
 ./run.sh prefill --quant-profile fp8_mxfp8 \
@@ -57,15 +144,7 @@ CUDA_VISIBLE_DEVICES=0 ./run.sh smoke
   --csv results/deepseek_v4_pro_fp8_mxfp8_prefill_kv65536.csv
 ```
 
-测试 case：
-
-| `seq_Q` | `seq_KV` |
-|---------|----------|
-| 1024 | 65536 |
-| 2048 | 65536 |
-| 4096 | 65536 |
-
-### Decode
+### Decode 运行
 
 ```bash
 ./run.sh decode --quant-profile fp8_mxfp8 \
@@ -73,13 +152,6 @@ CUDA_VISIBLE_DEVICES=0 ./run.sh smoke
   --warmup 5 --runs 20 \
   --csv results/deepseek_v4_pro_fp8_mxfp8_decode_kv65536.csv
 ```
-
-测试 case：
-
-| batch size | `seq_KV` |
-|------------|----------|
-| 16 | 65536 |
-| 32 | 65536 |
 
 ### Quant Profile
 
@@ -100,7 +172,11 @@ CUDA_VISIBLE_DEVICES=0 ./run.sh smoke
 `operator`, `backend`, `instances`, `call_ms`, `model_ms`, `pct`, `status`,
 `input_shape`, `output_shape`, `error`
 
-## 模型参数
+## 附录：原 GLM-5 Benchmarks
+
+以下内容保留仓库原有的 GLM-5 单算子和端到端测试说明，不属于上述 DeepSeek V4 Pro benchmark。
+
+### GLM-5 模型参数
 
 所有脚本使用统一的 GLM-5 模型配置：
 
@@ -121,9 +197,9 @@ CUDA_VISIBLE_DEVICES=0 ./run.sh smoke
 
 ---
 
-## 测试脚本
+### GLM-5 测试脚本
 
-### 1. bench_glm5_prefill.py — Prefill 阶段全算子性能
+#### 1. bench_glm5_prefill.py — Prefill 阶段全算子性能
 
 测试 sglang prefill 路径下的所有 GLM-5 算子，包括 Attention GEMM、DSA、DSA Indexer、MoE。
 
@@ -146,7 +222,7 @@ python bench_glm5_prefill.py
 
 ---
 
-### 2. bench_glm5_decode.py — Decode 阶段全算子性能
+#### 2. bench_glm5_decode.py — Decode 阶段全算子性能
 
 测试 sglang decode 路径下的所有算子。与 prefill 的区别：M 为 batch_size（每请求 1 token），batch flatten 成 s_q=M，attention 同样使用 DSA sparse kernel（`flash_mla_sparse_fwd`），DSA Indexer 使用 `fp8_paged_mqa_logits`。
 
@@ -165,7 +241,7 @@ python bench_glm5_decode.py
 
 ---
 
-### 3. bench_glm5_deepep.py — DeepEP All-to-All 通信性能
+#### 3. bench_glm5_deepep.py — DeepEP All-to-All 通信性能
 
 测试 MoE 的 expert parallel 通信开销：`get_dispatch_layout` + `dispatch`（发送 token 到专家所在 GPU）+ `combine`（收集结果）。
 
@@ -205,7 +281,7 @@ python bench_glm5_deepep.py --nnodes 1 --scenario balanced
 
 ---
 
-### 4. dsa_flashmla.py — FlashMLA Sparse Prefill 性能
+#### 4. dsa_flashmla.py — FlashMLA Sparse Prefill 性能
 
 测试 DSA（Dynamic Sparse Attention）中的 sparse prefill 算子 `flash_mla_sparse_fwd`，`s_q` 与 `s_kv` 独立配置并按笛卡尔积扫描。该算子对全量上下文做稀疏 prefill，不涉及 KV cache 命中率。
 
@@ -224,7 +300,7 @@ python dsa_flashmla.py
 
 ---
 
-### 5. mla_flashmla.py — FlashMLA Dense Prefill (传统 MLA) 性能
+#### 5. mla_flashmla.py — FlashMLA Dense Prefill (传统 MLA) 性能
 
 测试传统 MLA 的 dense prefill 算子 `flash_mla_with_kvcache`（paged KV cache，非稀疏）。与 `dsa_flashmla.py` 的区别：去掉稀疏（topk/indices），每个 query 对全部 s_kv 做 dense attention。除 topk 外的参数与 DSA 完全一致，`s_q`/`s_kv` 同样独立配置、笛卡尔积扫描，不涉及命中率。
 
@@ -242,7 +318,7 @@ python mla_flashmla.py
 
 ---
 
-### 6. dsa_indexer.py — DSA Indexer GEMM (cuBLAS FP8) 性能
+#### 6. dsa_indexer.py — DSA Indexer GEMM (cuBLAS FP8) 性能
 
 单独测试 DSA Indexer 的 4 个 GEMM 算子，使用 `torch._scaled_mm`（cuBLAS FP8）。
 
@@ -265,7 +341,7 @@ python dsa_indexer.py
 
 ---
 
-### 7. dsa_projection.py — Attention GEMM/BMM (DeepGEMM FP8) 性能
+#### 7. dsa_projection.py — Attention GEMM/BMM (DeepGEMM FP8) 性能
 
 单独测试 MLA attention 中的 6 个 GEMM/BMM 算子，使用 DeepGEMM FP8。
 
@@ -289,7 +365,7 @@ python dsa_projection.py
 
 ---
 
-### 8. moe_deepgemm.py — MoE Grouped GEMM (DeepGEMM FP8) 性能
+#### 8. moe_deepgemm.py — MoE Grouped GEMM (DeepGEMM FP8) 性能
 
 单独测试 MoE FFN 的 grouped GEMM（contiguous layout），使用 `deep_gemm.m_grouped_fp8_gemm_nt_contiguous`。测试多种随机 token 分布。
 
@@ -315,7 +391,7 @@ NUM_RUNS=50 NUM_DISTRIBUTIONS=10 python moe_deepgemm.py
 
 ---
 
-## 脚本关系
+### GLM-5 脚本关系
 
 | 脚本 | 定位 | 适用场景 |
 |------|------|----------|
