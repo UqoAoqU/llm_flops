@@ -38,10 +38,12 @@ print(hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest())
 PY
 )"
 
-if [[ -x "$VENV/bin/python" && -f "$MARKER" ]] \
-  && [[ "$(<"$MARKER")" == "$LOCK_HASH" ]] \
+if [[ -x "$VENV/bin/python" ]] \
   && (cd "$ROOT" && "$VENV/bin/python" -m benchmark_environment --check); then
-  echo "Benchmark runtime already matches lock $LOCK_HASH"
+  if [[ ! -f "$MARKER" || "$(<"$MARKER")" != "$LOCK_HASH" ]]; then
+    printf '%s\n' "$LOCK_HASH" > "$MARKER"
+  fi
+  echo "Benchmark runtime already satisfies lock $LOCK_HASH"
   exit 0
 fi
 

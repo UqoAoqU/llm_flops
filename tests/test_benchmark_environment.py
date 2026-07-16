@@ -18,6 +18,12 @@ class BenchmarkEnvironmentTest(unittest.TestCase):
             "cuda": "13.0",
             "gpu": {"capability": [10, 0], "name_contains": "B200"},
             "packages": {"torch": {"version": "2.11.0", "module": "torch"}},
+            "source": {
+                "sglang": {
+                    "package": "sglang",
+                    "commit": "19593359971ebc3582a74f000bf285488d993362",
+                }
+            },
             "required_symbols": ["torch.mm"],
         }
         self.observed = {
@@ -25,6 +31,9 @@ class BenchmarkEnvironmentTest(unittest.TestCase):
             "cuda": "13.0",
             "gpu": {"available": True, "capability": [10, 0], "name": "NVIDIA B200"},
             "packages": {"torch": {"version": "2.11.0", "module": "torch"}},
+            "source": {
+                "sglang": {"commit": "19593359971ebc3582a74f000bf285488d993362"}
+            },
             "symbols": {"torch.mm": True},
             "import_paths": {"torch": "/tmp/one/torch/__init__.py"},
         }
@@ -47,11 +56,26 @@ class BenchmarkEnvironmentTest(unittest.TestCase):
         observed["gpu"]["name"] = "NVIDIA H100"
         observed["packages"]["torch"]["version"] = "2.10.0"
         observed["symbols"]["torch.mm"] = False
+        observed["source"]["sglang"]["commit"] = "deadbeef"
         errors = validate_environment(self.lock, observed)
-        self.assertEqual(len(errors), 6)
+        self.assertEqual(len(errors), 7)
         self.assertTrue(any("Python" in error for error in errors))
         self.assertTrue(any("torch" in error for error in errors))
         self.assertTrue(any("torch.mm" in error for error in errors))
+
+    def test_source_commit_is_identity_when_generated_version_varies(self):
+        first = json.loads(json.dumps(self.observed))
+        first["packages"]["sglang"] = {
+            "version": "0.5.15.post2.dev110+g195933599",
+            "module": "sglang",
+        }
+        second = json.loads(json.dumps(first))
+        second["packages"]["sglang"]["version"] = (
+            "0.5.6.post3.dev7293+g195933599"
+        )
+        self.assertEqual(
+            environment_fingerprint(first), environment_fingerprint(second)
+        )
 
     def test_fingerprint_is_stable_and_path_independent(self):
         first = environment_fingerprint(self.observed)

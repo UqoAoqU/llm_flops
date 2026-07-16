@@ -43,7 +43,7 @@ class BootstrapContractTest(unittest.TestCase):
         self.assertIn(validation, self.script)
         marker_write = "printf '%s\\n' \"$LOCK_HASH\" > \"$MARKER\""
         self.assertIn(marker_write, self.script)
-        self.assertLess(self.script.rindex(validation), self.script.index(marker_write))
+        self.assertLess(self.script.index(validation), self.script.index(marker_write))
 
 
 if __name__ == "__main__":

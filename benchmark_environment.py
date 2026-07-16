@@ -8,6 +8,7 @@ import importlib
 import importlib.metadata
 import json
 import platform
+import copy
 from pathlib import Path
 from typing import Any
 
@@ -65,11 +66,38 @@ def collect_environment(
         packages[distribution] = {"version": version, "module": module_name}
         import_paths[module_name] = import_path
 
+    sources = {}
+    for name, source in lock.get("source", {}).items():
+        package_name = source["package"]
+        actual_commit = None
+        try:
+            direct_url = importlib.metadata.distribution(package_name).read_text(
+                "direct_url.json"
+            )
+            if direct_url:
+                actual_commit = json.loads(direct_url).get("vcs_info", {}).get(
+                    "commit_id"
+                )
+        except (importlib.metadata.PackageNotFoundError, json.JSONDecodeError):
+            pass
+        if actual_commit is None:
+            try:
+                generated = importlib.import_module(f"{package_name}._version")
+                actual_commit = getattr(generated, "commit_id", None)
+            except Exception:
+                pass
+        actual_commit = (actual_commit or "").removeprefix("g") or None
+        expected_commit = source["commit"]
+        if actual_commit and expected_commit.startswith(actual_commit):
+            actual_commit = expected_commit
+        sources[name] = {"commit": actual_commit}
+
     observed: dict[str, Any] = {
         "python": platform.python_version(),
         "cuda": None,
         "gpu": {"available": False, "capability": None, "name": None},
         "packages": packages,
+        "source": sources,
         "symbols": {name: _has_symbol(name) for name in lock["required_symbols"]},
         "import_paths": import_paths,
     }
@@ -112,9 +140,15 @@ def validate_environment(lock: dict[str, Any], observed: dict[str, Any]) -> list
         )
     for distribution, expected in lock["packages"].items():
         actual = observed.get("packages", {}).get(distribution, {}).get("version")
-        if actual != expected["version"]:
+        if expected["version"] is not None and actual != expected["version"]:
             errors.append(
                 f"package {distribution} mismatch: expected {expected['version']}, observed {actual}"
+            )
+    for name, expected in lock.get("source", {}).items():
+        actual = observed.get("source", {}).get(name, {}).get("commit")
+        if actual != expected["commit"]:
+            errors.append(
+                f"source {name} mismatch: expected {expected['commit']}, observed {actual}"
             )
     for symbol in lock["required_symbols"]:
         if not observed.get("symbols", {}).get(symbol, False):
@@ -123,7 +157,12 @@ def validate_environment(lock: dict[str, Any], observed: dict[str, Any]) -> list
 
 
 def environment_fingerprint(observed: dict[str, Any]) -> str:
-    stable = {key: value for key, value in observed.items() if key != "import_paths"}
+    stable = copy.deepcopy(
+        {key: value for key, value in observed.items() if key != "import_paths"}
+    )
+    for source_name in stable.get("source", {}):
+        if source_name in stable.get("packages", {}):
+            stable["packages"][source_name].pop("version", None)
     encoded = json.dumps(stable, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(encoded).hexdigest()[:12]
 
