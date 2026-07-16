@@ -39,7 +39,8 @@ PY
 )"
 
 if [[ -x "$VENV/bin/python" ]] \
-  && (cd "$ROOT" && "$VENV/bin/python" -m benchmark_environment --check); then
+  && (cd "$ROOT" && "$VENV/bin/python" -m benchmark_environment --check) \
+  && (cd "$ROOT" && "$VENV/bin/python" -c 'import benchmark_engine'); then
   if [[ ! -f "$MARKER" || "$(<"$MARKER")" != "$LOCK_HASH" ]]; then
     printf '%s\n' "$LOCK_HASH" > "$MARKER"
   fi
@@ -47,6 +48,7 @@ if [[ -x "$VENV/bin/python" ]] \
   exit 0
 fi
 
+rm -f "$MARKER"
 echo "Creating benchmark runtime under $RUNTIME"
 "$UV" venv --clear --python "$PYTHON" "$VENV"
 
@@ -76,7 +78,11 @@ echo "Installing locked runtime dependencies"
 "$UV" pip install --python "$VENV/bin/python" \
   "${PACKAGE_SPECS[@]}" "$SGLANG_SPEC"
 
+echo "Installing benchmark engine"
+VIRTUAL_ENV="$VENV" "$UV" pip install --no-deps -e "$ROOT"
+
 cd "$ROOT"
 "$VENV/bin/python" -m benchmark_environment --check
+"$VENV/bin/python" -c 'import benchmark_engine'
 printf '%s\n' "$LOCK_HASH" > "$MARKER"
 echo "Benchmark runtime ready: $VENV"

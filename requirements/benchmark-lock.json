@@ -19,6 +19,7 @@
     "flashinfer-python": {"version": "0.6.12", "module": "flashinfer"},
     "nvidia-cutlass-dsl": {"version": "4.5.2", "module": "cutlass"},
     "sgl-deep-gemm": {"version": "0.1.4", "module": "deep_gemm"},
+    "pyyaml": {"version": "6.0.3", "module": "yaml"},
     "sglang": {"version": null, "module": "sglang"},
     "sglang-kernel": {"version": "0.4.4", "module": "sgl_kernel"},
     "torch": {"version": "2.11.0", "module": "torch"}
