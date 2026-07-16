@@ -63,6 +63,35 @@ class SelectorTest(unittest.TestCase):
                 Selectors(candidates=("first",)),
             )
 
+    def test_explicit_candidate_overrides_suite_default_candidate_set(self):
+        suite = SuiteConfig(
+            1,
+            "smoke",
+            ("*_op",),
+            (),
+            ("smoke",),
+            "correctness",
+            (0,),
+            3,
+            1,
+            candidate_include=("first",),
+        )
+        defaults = select_candidates(
+            self.snapshot, ("alpha_op",), Selectors(), suite
+        )
+        self.assertEqual(
+            [item.implementation_id for item in defaults["alpha_op"]], ["first"]
+        )
+        explicit = select_candidates(
+            self.snapshot,
+            ("alpha_op",),
+            Selectors(candidates=("second",)),
+            suite,
+        )
+        self.assertEqual(
+            [item.implementation_id for item in explicit["alpha_op"]], ["second"]
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

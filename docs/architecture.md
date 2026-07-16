@@ -1,5 +1,11 @@
 # Architecture
 
+Phase 7 lifecycle: Registry → runtime environment identity → deterministic plan
+→ ArtifactWriter → isolated case worker → in-worker CorrectnessEvaluator →
+controller-only CSV projection → completion or resume. The controller never
+imports candidate modules. Build/JIT remains a distinct stage; steady-state
+timing starts in Phase 8.
+
 The engine uses a `src/benchmark_engine` package and keeps the legacy scripts
 at the repository root until migration is complete.
 

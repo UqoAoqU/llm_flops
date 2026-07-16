@@ -49,13 +49,26 @@ def select_candidates(
     snapshot: RegistrySnapshot,
     operator_ids: tuple[str, ...],
     selectors: Selectors,
+    suite: SuiteConfig | None = None,
 ) -> dict[str, tuple[ImplementationSpec, ...]]:
     result: dict[str, tuple[ImplementationSpec, ...]] = {}
+    # A suite candidate list is a safe default set (for example smoke should
+    # not run intentional failure demonstrations).  An explicit CLI selector
+    # is an override and must be able to address every valid registry member.
+    suite_patterns = (
+        ("*",)
+        if selectors.candidates or suite is None
+        else suite.candidate_include
+    )
     for operator_id in operator_ids:
         matching = tuple(
             candidate
             for candidate in snapshot.candidates.get(operator_id, ())
             if _matches(candidate.implementation_id, selectors.candidates)
+            and _matches(
+                candidate.implementation_id,
+                suite_patterns,
+            )
         )
         if not matching:
             raise SelectorError(

@@ -60,16 +60,18 @@ class CliDryRunTest(unittest.TestCase):
             self.assertFalse((root / "results").exists())
             self.assertEqual("torch" in sys.modules, torch_before)
 
-    def test_no_match_and_execution_unavailable_exit_two(self):
+    def test_no_match_and_unimplemented_performance_exit_two(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             self.repository(root)
             code, _, stderr = self.call(root, "run", "--suite", "smoke", "--dry-run", "--case", "missing")
             self.assertEqual(code, 2)
             self.assertIn("matched no cases", stderr)
-            code, _, stderr = self.call(root, "run", "--suite", "smoke")
+            code, _, stderr = self.call(
+                root, "run", "--suite", "smoke", "--mode", "performance"
+            )
             self.assertEqual(code, 2)
-            self.assertIn("execution not available", stderr)
+            self.assertIn("performance mode is not implemented", stderr)
 
 
 if __name__ == "__main__":

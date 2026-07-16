@@ -1,5 +1,10 @@
 # Development
 
+Phase 7 CLI changes require temporary output roots and real subprocess workers.
+Tests cover pass, numerical failure, exception, hard timeout, continue/fail-fast,
+partial/idempotent resume, read-only summarize, and malformed artifacts. Never
+commit `.runtime/`, `results/`, logs, caches, or worker products.
+
 ## Environment
 
 Run the repository bootstrap from the repository root:

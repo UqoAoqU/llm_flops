@@ -89,6 +89,23 @@ class WorkerProtocolTests(unittest.TestCase):
                 with self.assertRaises((ProtocolError, TypeError, ValueError)):
                     WorkerResponse.from_dict(invalid)
 
+    def test_correctness_payload_is_json_only_and_bounded(self) -> None:
+        base = WorkerResponse(
+            identity=request().identity,
+            result_id=request().result_id,
+            outcome=WorkerOutcome.SUCCESS,
+            stage=WorkerStage.COMPLETE,
+            worker_pid=123,
+            started_at_utc="2026-07-16T12:00:00Z",
+            finished_at_utc="2026-07-16T12:00:01Z",
+            elapsed_s=1.0,
+            stage_elapsed_s={"correctness": 0.5},
+            result_payload={"status": "pass", "comparison": None},
+        )
+        self.assertEqual(WorkerResponse.from_json(base.to_json()), base)
+        with self.assertRaises(ProtocolError):
+            replace(base, result_payload={"tensor": object()})
+
     def test_request_rejects_missing_unknown_type_and_version(self) -> None:
         base = request().to_dict()
         variants = []

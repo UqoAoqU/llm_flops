@@ -1,0 +1,7 @@
+schema_version: 1
+operator_id: example_cpu_add
+candidate_id: timeout_demo__20260716T120300Z__60c187ff
+entrypoint: implementation:operator
+framework: python
+metadata:
+  purpose: intentional-hard-timeout

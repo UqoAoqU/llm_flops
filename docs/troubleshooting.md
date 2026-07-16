@@ -1,7 +1,15 @@
 # Troubleshooting managed workers
 
-Phase 5 isolates candidate import and build failures but does not yet evaluate
-correctness or performance.
+- Import failures: inspect `logs/stderr.log` and `diagnostics/*-import.txt`.
+- Candidate exceptions: correctness `error` plus a JSON diagnostic.
+- Hard timeout: the whole worker process group is terminated; later cases run by default.
+- Single-case diagnosis: copy the reproduction command from `bench summarize`.
+- Interrupted run: `./bench.sh run --resume RUN_ID`.
+- `performance_not_implemented` is the expected Phase-7 skip, not a pass.
+
+Historical note: Phase 5 introduced import/build isolation. The current Phase 7
+worker also evaluates correctness. Performance stages remain explicitly skipped
+until Phase 8.
 
 ## A worker times out during import or build
 

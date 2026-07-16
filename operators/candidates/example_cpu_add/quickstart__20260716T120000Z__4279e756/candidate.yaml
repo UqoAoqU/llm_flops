@@ -1,0 +1,7 @@
+schema_version: 1
+operator_id: example_cpu_add
+candidate_id: quickstart__20260716T120000Z__4279e756
+entrypoint: implementation:operator
+framework: python
+metadata:
+  purpose: quickstart-pass

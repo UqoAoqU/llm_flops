@@ -102,10 +102,11 @@ def _object(value: object, field: str) -> dict[str, object]:
 
 
 def _fields(
-    value: Mapping[str, object], *, required: frozenset[str], field: str
+    value: Mapping[str, object], *, required: frozenset[str], field: str,
+    optional: frozenset[str] = frozenset(),
 ) -> None:
     missing = required.difference(value)
-    extra = set(value).difference(required)
+    extra = set(value).difference(required | optional)
     if missing:
         raise ProtocolError(f"{field} missing fields: {', '.join(sorted(missing))}")
     if extra:
@@ -386,6 +387,7 @@ class WorkerResponse:
     error_type: str | None = None
     error_message: str | None = None
     exit_code: int | None = None
+    result_payload: Mapping[str, object] | None = None
     schema_version: int = PROTOCOL_SCHEMA_VERSION
 
     def __post_init__(self) -> None:
@@ -416,6 +418,17 @@ class WorkerResponse:
         _relative_diagnostic(self.diagnostic_path)
         _bounded_text(self.error_type, "error_type", 128)
         _bounded_text(self.error_message, "error_message", 512)
+        if self.result_payload is not None:
+            if not isinstance(self.result_payload, Mapping) or not all(
+                isinstance(key, str) for key in self.result_payload
+            ):
+                raise ProtocolError("result_payload must be a string-keyed object or null")
+            try:
+                encoded = json.dumps(self.result_payload, allow_nan=False).encode("utf-8")
+            except (TypeError, ValueError) as error:
+                raise ProtocolError("result_payload must be strictly JSON-safe") from error
+            if len(encoded) > 1024 * 1024:
+                raise ProtocolError("result_payload exceeds 1 MiB")
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -433,6 +446,7 @@ class WorkerResponse:
             "error_type": self.error_type,
             "error_message": self.error_message,
             "exit_code": self.exit_code,
+            "result_payload": None if self.result_payload is None else dict(self.result_payload),
         }
 
     @classmethod
@@ -456,7 +470,12 @@ class WorkerResponse:
                 "exit_code",
             }
         )
-        _fields(data, required=required, field="WorkerResponse")
+        _fields(
+            data,
+            required=required,
+            optional=frozenset({"result_payload"}),
+            field="WorkerResponse",
+        )
         durations = _object(data["stage_elapsed_s"], "WorkerResponse.stage_elapsed_s")
         try:
             outcome = WorkerOutcome(data["outcome"])
@@ -500,6 +519,11 @@ class WorkerResponse:
                 None
                 if data["exit_code"] is None
                 else _integer(data["exit_code"], "WorkerResponse.exit_code")
+            ),
+            result_payload=(
+                None
+                if data.get("result_payload") is None
+                else _object(data["result_payload"], "WorkerResponse.result_payload")
             ),
         )
 

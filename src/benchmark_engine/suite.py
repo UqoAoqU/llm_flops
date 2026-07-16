@@ -30,6 +30,7 @@ class SuiteConfig:
     correctness_seeds: tuple[int, ...]
     performance_samples: int
     performance_inner_iterations: int
+    candidate_include: tuple[str, ...] = ("*",)
 
 
 def _fail(code: str, path: Path, field: str, message: str) -> None:
@@ -99,7 +100,12 @@ def load_suite(path: Path) -> SuiteConfig:
             "performance",
         }
     )
-    _fields(root, path, "$", required)
+    missing = required.difference(root)
+    unknown = set(root).difference(required | {"candidates"})
+    if missing:
+        _fail("missing_field", path, "$", f"missing {', '.join(sorted(missing))}")
+    if unknown:
+        _fail("unknown_field", path, "$", f"unknown {', '.join(sorted(unknown))}")
     version = _integer(root["schema_version"], path, "schema_version")
     if version != 1:
         _fail("schema_version", path, "schema_version", f"unsupported version {version}")
@@ -118,6 +124,15 @@ def load_suite(path: Path) -> SuiteConfig:
         frozenset({"samples", "inner_iterations"}),
     )
     mode = _string(root["mode"], path, "mode")
+    candidate_include = ("*",)
+    if "candidates" in root:
+        candidate_section = _mapping(root["candidates"], path, "candidates")
+        _fields(candidate_section, path, "candidates", frozenset({"include"}))
+        candidate_include = _strings(
+            candidate_section["include"], path, "candidates.include"
+        )
+        if not candidate_include:
+            _fail("value", path, "candidates.include", "must not be empty")
     if mode not in {"all", "correctness", "performance"}:
         _fail("value", path, "mode", "must be all, correctness, or performance")
     seeds_value = correctness["seeds"]
@@ -147,6 +162,7 @@ def load_suite(path: Path) -> SuiteConfig:
             "performance.inner_iterations",
             positive=True,
         ),
+        candidate_include=candidate_include,
     )
 
 

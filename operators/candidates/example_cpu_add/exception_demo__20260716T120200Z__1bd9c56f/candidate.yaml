@@ -1,0 +1,7 @@
+schema_version: 1
+operator_id: example_cpu_add
+candidate_id: exception_demo__20260716T120200Z__1bd9c56f
+entrypoint: implementation:operator
+framework: python
+metadata:
+  purpose: intentional-exception

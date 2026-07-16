@@ -11,7 +11,12 @@ from pathlib import Path
 
 from . import __version__
 from .config import DEFAULT_OUTPUT_ROOT
-from .engine import build_dry_run_plan
+from .engine import (
+    build_dry_run_plan,
+    build_execution_plan,
+    build_resume_plan,
+    execute_plan,
+)
 from .environment import collect_report
 from .registry import (
     FilesystemRegistry,
@@ -20,6 +25,9 @@ from .registry import (
     selected_registry_issues,
 )
 from .selectors import Selectors
+from .reporting import ArtifactError, ResumeMismatchError, summarize_evaluation
+from .reporting.csv_writer import CsvContractError
+from .ids import evaluation_result_path
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -56,8 +64,8 @@ def build_parser() -> argparse.ArgumentParser:
     env_parser = commands.add_parser("env", help="collect the benchmark environment")
     env_parser.add_argument("--json", action="store_true", help="emit stable JSON")
 
-    run_parser = commands.add_parser("run", help="plan a suite evaluation")
-    run_parser.add_argument("--suite", required=True, metavar="ID")
+    run_parser = commands.add_parser("run", help="run a correctness evaluation")
+    run_parser.add_argument("--suite", metavar="ID")
     run_parser.add_argument("--dry-run", action="store_true")
     run_parser.add_argument("--operator", action="append", default=[], metavar="GLOB")
     run_parser.add_argument("--candidate", action="append", default=[], metavar="GLOB")
@@ -74,9 +82,20 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--evaluation-id")
     run_parser.add_argument(
         "--resume",
-        action="store_true",
-        help="allow an existing evaluation path (recovery starts in Phase 4)",
+        metavar="RUN_ID",
+        help="resume unfinished results associated with RUN_ID",
     )
+    run_parser.add_argument("--fail-fast", action="store_true")
+    run_parser.add_argument("--timeout-s", type=float)
+
+    summary_parser = commands.add_parser(
+        "summarize", help="summarize existing artifacts without executing code"
+    )
+    summary_parser.add_argument("target", nargs="?", type=Path)
+    summary_parser.add_argument("--operator")
+    summary_parser.add_argument("--candidate")
+    summary_parser.add_argument("--evaluation")
+    summary_parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     return parser
 
 
@@ -185,38 +204,129 @@ def main(
             for error in report["errors"]:
                 print(f"ERROR: {error}")
         return 0
-    if arguments.command == "run":
-        if not arguments.dry_run:
+    if arguments.command == "summarize":
+        identity_values = (
+            arguments.operator,
+            arguments.candidate,
+            arguments.evaluation,
+        )
+        if arguments.target is not None and any(identity_values):
+            print("summarize target and identity selectors are mutually exclusive", file=sys.stderr)
+            return 2
+        if arguments.target is None and not all(identity_values):
             print(
-                "execution not available until later phase; use --dry-run",
+                "summarize requires a target or --operator/--candidate/--evaluation",
                 file=sys.stderr,
             )
             return 2
+        target = arguments.target
+        if target is None:
+            output_root = arguments.output_root
+            if not output_root.is_absolute():
+                output_root = root / output_root
+            target = evaluation_result_path(
+                output_root,
+                arguments.operator,
+                arguments.candidate,
+                arguments.evaluation,
+            )
+        elif not target.is_absolute():
+            target = root / target
+        try:
+            print(summarize_evaluation(target), end="")
+        except (OSError, CsvContractError, ValueError) as error:
+            print(f"summary error: {error}", file=sys.stderr)
+            return 3 if Path(target).exists() else 2
+        return 0
+    if arguments.command == "run":
         output_root = arguments.output_root
         if not output_root.is_absolute():
             output_root = root / output_root
+        selectors = Selectors(
+            operators=tuple(arguments.operator),
+            candidates=tuple(arguments.candidate),
+            cases=tuple(arguments.case),
+            tags=tuple(arguments.tag),
+            exclude_operators=tuple(arguments.exclude_operator),
+        )
         try:
-            plan = build_dry_run_plan(
-                root,
-                arguments.suite,
-                Selectors(
-                    operators=tuple(arguments.operator),
-                    candidates=tuple(arguments.candidate),
-                    cases=tuple(arguments.case),
-                    tags=tuple(arguments.tag),
-                    exclude_operators=tuple(arguments.exclude_operator),
-                ),
+            if arguments.dry_run:
+                if arguments.resume is not None:
+                    raise ValueError("--dry-run and --resume are mutually exclusive")
+                plan = build_dry_run_plan(
+                    root,
+                    arguments.suite or "smoke",
+                    selectors,
+                    output_root=output_root,
+                    mode=arguments.mode,
+                    seeds=tuple(arguments.seed),
+                    evaluation_id=arguments.evaluation_id,
+                )
+                print(json.dumps(plan.to_dict(), indent=2, sort_keys=True))
+                return 0
+            if arguments.mode == "performance":
+                raise ValueError("performance mode is not implemented in Phase 7")
+            if arguments.resume is not None:
+                if any(
+                    (
+                        arguments.operator,
+                        arguments.candidate,
+                        arguments.case,
+                        arguments.tag,
+                        arguments.exclude_operator,
+                        arguments.seed,
+                        arguments.evaluation_id,
+                        arguments.suite,
+                        arguments.mode,
+                    )
+                ):
+                    raise ValueError("--resume cannot be combined with selectors or identity overrides")
+                plan, snapshot, environment = build_resume_plan(
+                    root, arguments.resume, output_root=output_root
+                )
+            else:
+                plan, snapshot, environment = build_execution_plan(
+                    root,
+                    arguments.suite or "smoke",
+                    selectors,
+                    output_root=output_root,
+                    mode=arguments.mode or "correctness",
+                    seeds=tuple(arguments.seed),
+                    evaluation_id=arguments.evaluation_id,
+                )
+            outcome = execute_plan(
+                plan,
+                snapshot,
+                environment,
                 output_root=output_root,
-                mode=arguments.mode,
-                seeds=tuple(arguments.seed),
-                evaluation_id=arguments.evaluation_id,
-                resume=arguments.resume,
+                original_command=("bench", *(argv or sys.argv[1:])),
+                resume=arguments.resume is not None,
+                fail_fast=arguments.fail_fast,
+                timeout_s=arguments.timeout_s,
             )
-        except (OSError, KeyError, TypeError, ValueError) as error:
+        except KeyboardInterrupt:
+            print("interrupted by user", file=sys.stderr)
+            return 130
+        except ResumeMismatchError as error:
             print(str(error), file=sys.stderr)
             return 2
-        print(json.dumps(plan.to_dict(), indent=2, sort_keys=True))
-        return 0
+        except ArtifactError as error:
+            print(str(error), file=sys.stderr)
+            return 3
+        except OSError as error:
+            print(f"infrastructure error: {error}", file=sys.stderr)
+            return 3
+        except (KeyError, TypeError, ValueError) as error:
+            print(str(error), file=sys.stderr)
+            return 2
+        print(f"run_id: {outcome.run_id}")
+        print(
+            f"correctness: {outcome.passed} passed, {outcome.failed} failed; "
+            f"infrastructure failures: {outcome.infrastructure_failures}"
+        )
+        for path in outcome.evaluation_paths:
+            print(f"result: {path}")
+        return outcome.exit_code
 
     registry = FilesystemRegistry(root)
     snapshot = registry.discover()

@@ -67,7 +67,7 @@ class PlanBuilder:
                 "registry is invalid for selected scope: "
                 + "; ".join(str(issue) for issue in issues)
             )
-        candidates = select_candidates(snapshot, operator_ids, selectors)
+        candidates = select_candidates(snapshot, operator_ids, selectors, suite)
         pairs = tuple(
             (operator_id, candidate)
             for operator_id in operator_ids

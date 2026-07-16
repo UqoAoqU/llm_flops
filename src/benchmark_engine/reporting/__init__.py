@@ -27,7 +27,7 @@ from .csv_writer import (
     RESULTS_SCHEMA,
     atomic_write_text,
 )
-from .summary import render_summary
+from .summary import render_summary, summarize_evaluation
 
 __all__ = [
     "CSV_SCHEMA_VERSION",
@@ -53,5 +53,6 @@ __all__ = [
     "ResumeState",
     "atomic_write_text",
     "render_summary",
+    "summarize_evaluation",
     "validate_resume_compatibility",
 ]

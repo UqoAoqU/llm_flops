@@ -135,6 +135,7 @@ class CorrectnessResult:
     input_summary: Mapping[str, object]
     comparison: ComparisonResult | None = None
     diagnostic: Mapping[str, object] | None = None
+    output_contracts: Mapping[str, Mapping[str, object]] = field(default_factory=dict)
 
     @property
     def passed(self) -> bool:
@@ -159,6 +160,7 @@ class CorrectnessResult:
             "input_summary": _json_safe(self.input_summary),
             "comparison": comparison,
             "diagnostic": None if self.diagnostic is None else _json_safe(self.diagnostic),
+            "output_contracts": _json_safe(self.output_contracts),
         }
 
 

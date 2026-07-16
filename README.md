@@ -4,6 +4,35 @@ DeepSeek V4 Pro Prefill、Decode 及各算子的 CUDA 性能测试。底层后�
 
 ## Benchmark Engine
 
+> Phase 7 status: the correctness CLI is now enabled. Performance remains
+> intentionally skipped as `performance_not_implemented` until Phase 8.
+
+### Five-minute CPU quick start
+
+```bash
+./bootstrap.sh
+./bench.sh validate --operator example_cpu_add
+./bench.sh list --operator example_cpu_add
+./bench.sh run --suite smoke
+```
+
+The last command prints the `run_id` and mirrored result path. To inspect an
+intentional numerical failure and its reproduction command:
+
+```bash
+./bench.sh run --mode correctness \
+  --operator example_cpu_add \
+  --candidate numeric_bad__20260716T120100Z__c1ac82e6 \
+  --case tiny --seed 1
+./bench.sh summarize results/example_cpu_add/numeric_bad__20260716T120100Z__c1ac82e6/<evaluation_id>
+./bench.sh run --resume <run_id>
+```
+
+Exit codes are 0 for pass, 1 for a correctness gate failure, 2 for usage or
+configuration, 3 for worker/engine infrastructure, and 130 for Ctrl-C. Every
+completed case is durable before the next case starts; resume never reruns an
+existing `result_id`. These commands need no GPU and do not change `run.sh`.
+
 新的 benchmark engine 正在与现有 DeepSeek V4 和 GLM-5 入口并行建设。
 当前 engine 提供可安装的 `benchmark_engine` 包、静态 Registry、确定性 dry-run
 计划、可恢复 artifact，以及隔离 import/build 的 Controller/Worker 骨架：
@@ -14,10 +43,10 @@ DeepSeek V4 Pro Prefill、Decode 及各算子的 CUDA 性能测试。底层后�
 ./bench.sh --help
 ~~~
 
-`bench list`、`bench validate`、`bench env` 与 `bench run --dry-run` 已可用。
-Phase 6 已提供 worker 内使用的输入隔离、输出标准化、Comparator 与正确性
-Evaluator API；它尚未接入 CLI。完整非 dry-run CLI 要到 Phase 7 才开放，
-因此当前 `bench run` 不带 `--dry-run` 仍返回退出码 2。正确性契约见
+`bench list`、`bench validate`、`bench env`、`bench run --dry-run` 与 Phase 7
+CPU correctness 执行均已可用。Phase 6 提供的输入隔离、输出标准化、Comparator
+和 Evaluator API 已由 Phase 7 接入隔离 worker；性能测量将在 Phase 8 接入。
+正确性契约见
 [correctness guide](docs/correctness.md)。
 架构与开发约定见 [文档索引](docs/index.md)，完整方案见
 [批准的设计](design.md)，贡献要求见 [CONTRIBUTING.md](CONTRIBUTING.md)。

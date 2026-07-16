@@ -1,5 +1,21 @@
 # Result layout
 
+```text
+results/<operator_id>/<candidate_id>/<evaluation_id>/
+  evaluation_manifest.json
+  results.csv
+  correctness_outputs.csv
+  performance_samples.csv
+  summary.md
+  diagnostics/
+  logs/{controller.jsonl,worker.jsonl,stdout.log,stderr.log}
+```
+
+Each case atomically updates CSV artifacts. Performance samples have only a
+schema header in Phase 7. History/latest publish only after every expected result
+is terminal without infrastructure failure. Resume uses `run_index.csv` and
+deduplicates by `result_id`.
+
 Applies to manifest schema v1 and CSV schema v1.
 
 Candidate source and result directories share the same two identity keys:

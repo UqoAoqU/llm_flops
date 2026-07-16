@@ -1,6 +1,7 @@
 import sys
 import types
 import unittest
+import warnings
 from unittest.mock import patch
 
 from benchmark_engine.environment import (
@@ -33,6 +34,26 @@ class EngineEnvironmentTest(unittest.TestCase):
         second = planning_fingerprint({"a": 1, "b": [2]})
         self.assertEqual(first, second)
         self.assertEqual(len(first), 64)
+
+    def test_environment_probe_suppresses_only_scoped_third_party_deprecations(self):
+        def noisy_probe(lock, include_cuda=True):
+            warnings.warn("optional dependency is deprecated", DeprecationWarning)
+            return {"lock": lock, "include_cuda": include_cuda}
+
+        legacy = types.SimpleNamespace(collect_environment=noisy_probe)
+        with patch.dict(sys.modules, {"benchmark_environment": legacy}):
+            with warnings.catch_warnings(record=True) as captured:
+                warnings.simplefilter("always")
+                observed = collect_environment({"schema_version": 1}, include_cuda=False)
+            self.assertEqual(captured, [])
+            self.assertFalse(observed["include_cuda"])
+
+        # The adapter must not mutate the process-wide warning policy.
+        with warnings.catch_warnings(record=True) as outside:
+            warnings.simplefilter("always")
+            warnings.warn("outside probe", DeprecationWarning)
+        self.assertEqual(len(outside), 1)
+        self.assertIs(outside[0].category, DeprecationWarning)
 
 
 if __name__ == "__main__":

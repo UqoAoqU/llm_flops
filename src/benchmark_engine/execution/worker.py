@@ -1,9 +1,4 @@
-"""Managed worker process for import/build isolation.
-
-Phase 5 intentionally skips correctness and performance semantics.  Those
-stages are still represented explicitly in the event stream so consumers can
-distinguish "not implemented" from successful execution.
-"""
+"""Managed worker process for isolated import, build, and correctness."""
 
 from __future__ import annotations
 
@@ -16,11 +11,14 @@ import sys
 import threading
 import time
 import traceback
+import json
 from collections.abc import Sequence
 from pathlib import Path
 
 from benchmark_engine.registry.validation import validate_entrypoint
 from benchmark_engine.reporting.csv_writer import atomic_write_text
+from benchmark_engine.correctness import CorrectnessEvaluator
+from benchmark_engine.models import CaseSpec
 
 from .event_log import EventEmitter, EventLog
 from .isolation import ensure_beneath, validated_artifact_root, validated_root
@@ -152,6 +150,77 @@ def _write_response(path: Path, response: WorkerResponse) -> None:
     atomic_write_text(path, response.to_json())
 
 
+_OPERATOR_SPEC_MEMBERS = (
+    "operator_id",
+    "cases",
+    "make_inputs",
+    "clone_inputs",
+    "normalize_output",
+    "comparator",
+    "cost_model",
+)
+
+
+def _validate_operator_spec(runtime_spec: object, request: WorkerRequest) -> bool:
+    """Validate a formal Phase-7 spec; return false for a Phase-5 fixture.
+
+    Phase-5 worker fixtures deliberately expose an empty object and remain a
+    supported import/build-only compatibility path.  Once an entrypoint
+    declares any OperatorSpec member, however, it is a formal spec and partial
+    implementations must fail with a stable correctness-stage diagnostic.
+    """
+
+    declared = tuple(
+        name for name in _OPERATOR_SPEC_MEMBERS if hasattr(runtime_spec, name)
+    )
+    if not declared:
+        return False
+    missing = tuple(
+        name for name in _OPERATOR_SPEC_MEMBERS if not hasattr(runtime_spec, name)
+    )
+    if missing:
+        raise TypeError(
+            "OperatorSpec contract is incomplete; missing: " + ", ".join(missing)
+        )
+    operator_id = getattr(runtime_spec, "operator_id")
+    if not isinstance(operator_id, str) or not operator_id:
+        raise TypeError("OperatorSpec.operator_id must be a non-empty string")
+    if operator_id != request.identity.operator_id:
+        raise ValueError(
+            f"OperatorSpec.operator_id {operator_id!r} does not match request "
+            f"identity {request.identity.operator_id!r}"
+        )
+    for name in _OPERATOR_SPEC_MEMBERS[1:]:
+        if not callable(getattr(runtime_spec, name)):
+            raise TypeError(f"OperatorSpec.{name} must be callable")
+    try:
+        cases = tuple(runtime_spec.cases())
+    except TypeError as error:
+        raise TypeError("OperatorSpec.cases() must return CaseSpec values") from error
+    if not cases or not all(isinstance(case, CaseSpec) for case in cases):
+        raise TypeError("OperatorSpec.cases() must return non-empty CaseSpec values")
+    case_ids = tuple(case.case_id for case in cases)
+    if len(case_ids) != len(set(case_ids)):
+        raise ValueError("OperatorSpec.cases() returned duplicate case_id values")
+    declared_case = next(
+        (case for case in cases if case.case_id == request.case.case_id), None
+    )
+    if declared_case is None:
+        raise ValueError(
+            f"request case {request.case.case_id!r} is not declared by OperatorSpec.cases()"
+        )
+    # CLI seed overrides are allowed, while the shape/tag identity used to
+    # construct the plan must still agree with the trusted declaration.
+    if (
+        dict(declared_case.symbols) != dict(request.case.symbols)
+        or declared_case.tags != request.case.tags
+    ):
+        raise ValueError(
+            f"request case {request.case.case_id!r} does not match its OperatorSpec declaration"
+        )
+    return True
+
+
 def execute(
     request: WorkerRequest,
     response_path: Path,
@@ -199,21 +268,22 @@ def execute(
     error_type: str | None = None
     error_message: str | None = None
     exit_code = 0
+    result_payload: dict[str, object] | None = None
     try:
         stage_started = time.monotonic()
         emitter.emit(EventName.IMPORT_STARTED, WorkerStage.IMPORT, "started")
         try:
             token = hashlib.sha256(request.result_id.encode("utf-8")).hexdigest()[:12]
-            _load_entrypoint(
+            runtime_spec = _load_entrypoint(
                 reference_root, request.spec_entrypoint, "reference_spec", token
             )
-            _load_entrypoint(
+            reference_callable = _load_entrypoint(
                 reference_root,
                 request.reference_entrypoint,
                 "reference_implementation",
                 token,
             )
-            _load_entrypoint(
+            candidate_callable = _load_entrypoint(
                 candidate_root,
                 request.candidate_entrypoint,
                 "candidate_implementation",
@@ -279,10 +349,79 @@ def execute(
                     "success" if request.build_argv else "skipped",
                     message=None if request.build_argv else "no build argv declared",
                 )
+                stage_started = time.monotonic()
+                emitter.emit(
+                    EventName.CORRECTNESS_STARTED,
+                    WorkerStage.CORRECTNESS,
+                    "started",
+                )
+                try:
+                    formal_spec = _validate_operator_spec(runtime_spec, request)
+                    if not formal_spec:
+                        emitter.emit(
+                            EventName.CORRECTNESS_FINISHED,
+                            WorkerStage.CORRECTNESS,
+                            "skipped",
+                            message="Phase-5 import/build-only fixture",
+                        )
+                    else:
+                        if not callable(reference_callable) or not callable(candidate_callable):
+                            raise TypeError("implementation entrypoints must be callable")
+                        result = CorrectnessEvaluator(
+                            determinism_repeats=request.resolved_config.correctness_determinism_repeats
+                        ).evaluate(
+                            spec=runtime_spec,
+                            reference=reference_callable,
+                            candidate=candidate_callable,
+                            case=request.case,
+                            operator_id=request.identity.operator_id,
+                            candidate_id=request.identity.candidate_id,
+                        )
+                        result_payload = result.to_dict()
+                        if result.diagnostic is not None:
+                            path = _diagnostic_path(
+                                artifact_root, request.result_id, WorkerStage.CORRECTNESS
+                            ).with_suffix(".json")
+                            atomic_write_text(
+                                path,
+                                json.dumps(
+                                    result_payload,
+                                    ensure_ascii=False,
+                                    indent=2,
+                                    sort_keys=True,
+                                    allow_nan=False,
+                                )
+                                + "\n",
+                            )
+                            diagnostic = path.relative_to(artifact_root).as_posix()
+                except BaseException as error:
+                    stage_elapsed[WorkerStage.CORRECTNESS.value] = time.monotonic() - stage_started
+                    outcome = _classify(error)
+                    failed_stage = WorkerStage.CORRECTNESS
+                    error_type = type(error).__name__
+                    error_message = _bounded_message(error)
+                    path = _diagnostic_path(artifact_root, request.result_id, failed_stage)
+                    atomic_write_text(path, traceback.format_exc()[-1024 * 1024 :])
+                    diagnostic = path.relative_to(artifact_root).as_posix()
+                    emitter.emit(
+                        EventName.CORRECTNESS_FINISHED,
+                        WorkerStage.CORRECTNESS,
+                        outcome.value,
+                        message=error_message,
+                    )
+                else:
+                    if formal_spec:
+                        emitter.emit(
+                            EventName.CORRECTNESS_FINISHED,
+                            WorkerStage.CORRECTNESS,
+                            "success",
+                            message=None if result_payload is None else str(result_payload["status"]),
+                        )
+                stage_elapsed[WorkerStage.CORRECTNESS.value] = time.monotonic() - stage_started
                 _skip_from(
                     emitter,
-                    2,
-                    "Phase 5 execution skeleton has no correctness/performance semantics",
+                    3,
+                    "performance_not_implemented",
                 )
     finally:
         stop.set()
@@ -302,6 +441,7 @@ def execute(
         error_type=error_type,
         error_message=error_message,
         exit_code=exit_code,
+        result_payload=result_payload,
     )
     _write_response(response_path, response)
     emitter.emit(

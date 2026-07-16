@@ -1,5 +1,18 @@
 # Benchmark CLI
 
+```text
+bench run --suite smoke
+bench run --mode correctness --operator OP --candidate CANDIDATE [--case CASE] [--seed N]
+bench run --resume RUN_ID
+bench summarize PATH
+bench summarize --operator OP --candidate CANDIDATE --evaluation EVALUATION
+```
+
+Default execution continues after gate failures. `--fail-fast` stops remaining
+jobs while retaining completed rows. `--dry-run` keeps its Phase-3 JSON behavior
+and creates no artifacts. Exit codes: 0 pass, 1 gate, 2 usage/config/registry,
+3 infrastructure, 130 Ctrl-C.
+
 Discovery commands remain available:
 
 ```bash
@@ -30,17 +43,14 @@ different categories are ANDed; excludes apply last. `--mode` overrides the
 suite. `--output-root`, `--evaluation-id` (exactly one selected candidate), and
 `--resume` affect planning. An existing evaluation path is rejected unless
 `--resume` is present. Phase 4 provides the durable run-index/manifest resume
-reader used by the later execution CLI. Phase 5 adds a Python Controller/Worker
-API for isolated import/build, but intentionally does not connect it to
-`bench run`; non-dry `bench run` therefore continues to exit 2 and does not
-mutate artifacts yet.
+reader used by the execution CLI. The Controller/Worker API isolates import,
+build, and Phase-7 correctness execution.
 
 Dry-run prints stable-key JSON and has no formal filesystem side effects. Its
 environment fingerprint is explicitly marked `provisional/dry-run` and is a
-SHA-256 of normalized dependency-lock contents. A non-dry run exits 2 with
-`execution not available until later phase`.
+SHA-256 of normalized dependency-lock contents. A non-dry correctness run uses
+a runtime fingerprint and durable artifacts.
 
-Artifact writers and the managed worker are currently Python APIs for the
-future correctness CLI. Their
+Artifact writers and the managed worker back the correctness CLI. Their
 state and compatibility rules are documented in [Result layout](result-layout.md)
-and [CSV schema v1](csv-schema.md); no Phase 5 CLI command bypasses those rules.
+and [CSV schema v1](csv-schema.md); no CLI command bypasses those rules.

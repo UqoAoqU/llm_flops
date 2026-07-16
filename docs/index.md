@@ -1,5 +1,9 @@
 # Benchmark Engine documentation
 
+Phase 7: [CLI and exit codes](cli.md), [correctness](correctness.md),
+[result/resume layout](result-layout.md), [troubleshooting](troubleshooting.md),
+[architecture](architecture.md), and [development](development.md).
+
 The benchmark engine is being introduced alongside the existing DeepSeek V4
 and GLM-5 launchers. Through Phase 6 it provides strict discovery,
 deterministic plans, recoverable mirrored artifacts, isolated workers, and

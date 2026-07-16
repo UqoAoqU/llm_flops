@@ -1,8 +1,21 @@
 # Correctness contract
 
-Phase 6 supplies the worker-local correctness library. Phase 7 will connect it
-to `bench run`; Phase 8 adds performance timers. No tensor or runtime object is
-added to the controller/worker JSON schema by this phase.
+Phase 7 connects this worker-local contract to `bench run`. Trusted `spec.py`,
+reference, and candidate code load inside an isolated worker; tensor and callable
+objects never cross the JSON protocol. Candidate exceptions, numerical mismatch,
+nondeterminism, OOM, unsupported, and correctness hard timeout are gate failures
+(exit 1). Import/build protocol damage, worker crash, and artifact write failure
+are infrastructure failures (exit 3).
+
+```bash
+./bench.sh run --mode correctness --operator OP --candidate CANDIDATE --case CASE --seed SEED
+```
+
+Phase 7 never measures performance. Rows use `performance_status=skipped` and
+`performance_not_implemented`; failed correctness cannot enter a ranking.
+
+Phase 6 supplied the worker-local library; Phase 7 supplies this CLI integration.
+Phase 8 adds performance timers.
 
 ## Inputs and state
 

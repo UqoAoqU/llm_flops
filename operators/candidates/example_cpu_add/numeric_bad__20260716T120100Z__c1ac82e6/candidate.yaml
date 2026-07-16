@@ -1,0 +1,7 @@
+schema_version: 1
+operator_id: example_cpu_add
+candidate_id: numeric_bad__20260716T120100Z__c1ac82e6
+entrypoint: implementation:operator
+framework: python
+metadata:
+  purpose: intentional-numerical-failure

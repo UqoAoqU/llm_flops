@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -20,7 +21,14 @@ def load_lock(path: Path | None = None) -> dict[str, Any]:
 def collect_environment(
     lock: dict[str, Any], *, include_cuda: bool = True
 ) -> dict[str, Any]:
-    return _legacy().collect_environment(lock, include_cuda=include_cuda)
+    # Some optional dependency probes import third-party packages which still
+    # emit deprecation warnings at import time.  Environment introspection is
+    # a CLI implementation detail, so keep those warnings from leaking into a
+    # successful command's stderr.  The filter is deliberately scoped to this
+    # legacy probe; application warnings and probe exceptions remain visible.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        return _legacy().collect_environment(lock, include_cuda=include_cuda)
 
 
 def validate_environment(

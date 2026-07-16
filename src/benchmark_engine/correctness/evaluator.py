@@ -119,19 +119,31 @@ class CorrectnessEvaluator:
                 return self._exception_result(error, case, fingerprint, summary, "candidate", reproduction)
 
         first = candidate_outputs[0]
+        reference_leaves = reference_output.by_path()
+        candidate_leaves = first.by_path()
+        output_contracts = {}
+        for path in sorted(set(reference_leaves) | set(candidate_leaves)):
+            reference_leaf = reference_leaves.get(path)
+            candidate_leaf = candidate_leaves.get(path)
+            output_contracts[path] = {
+                "reference_dtype": None if reference_leaf is None else reference_leaf.dtype,
+                "candidate_dtype": None if candidate_leaf is None else candidate_leaf.dtype,
+                "reference_shape": None if reference_leaf is None else list(reference_leaf.shape),
+                "candidate_shape": None if candidate_leaf is None else list(candidate_leaf.shape),
+            }
         for repeated in candidate_outputs[1:]:
             drift = ExactComparator().compare(first, repeated)
             if not drift.passed:
                 diagnostic = comparison_diagnostic(drift, reproduction=reproduction)
                 diagnostic["kind"] = "nondeterministic"
-                return CorrectnessResult("nondeterministic", case.case_id, case.seed, fingerprint, GENERATOR_VERSION, summary, drift, diagnostic)
+                return CorrectnessResult("nondeterministic", case.case_id, case.seed, fingerprint, GENERATOR_VERSION, summary, drift, diagnostic, output_contracts)
         try:
             comparison = spec.comparator(case).compare(reference_output, first, case_overrides=case_overrides or {})
         except Exception as error:
             return self._exception_result(error, case, fingerprint, summary, "compare", reproduction)
         status = "pass" if comparison.passed else "fail"
         diagnostic = None if comparison.passed else comparison_diagnostic(comparison, reproduction=reproduction)
-        return CorrectnessResult(status, case.case_id, case.seed, fingerprint, GENERATOR_VERSION, summary, comparison, diagnostic)
+        return CorrectnessResult(status, case.case_id, case.seed, fingerprint, GENERATOR_VERSION, summary, comparison, diagnostic, output_contracts)
 
     @staticmethod
     def _exception_result(error: Exception, case: CaseSpec, fingerprint: str, summary: Mapping[str, object], stage: str, reproduction: str) -> CorrectnessResult:
