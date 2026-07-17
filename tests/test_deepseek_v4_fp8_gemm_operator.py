@@ -23,8 +23,12 @@ from deepseek_v4_benchmark import decode_adapters, graph_ms, prefill_adapters
 ROOT = Path(__file__).resolve().parents[1]
 OPERATOR_ID = "deepseek_v4_fp8_gemm_nt"
 CANDIDATE_ID = "pytorch_dequant__20260717T040000Z__f2d56382"
+CONTROL_CANDIDATE_ID = "test_impl__20260717T061620Z__cfb18306"
 REFERENCE_ROOT = ROOT / "operators" / "references" / OPERATOR_ID
 CANDIDATE_ROOT = ROOT / "operators" / "candidates" / OPERATOR_ID / CANDIDATE_ID
+CONTROL_CANDIDATE_ROOT = (
+    ROOT / "operators" / "candidates" / OPERATOR_ID / CONTROL_CANDIDATE_ID
+)
 
 
 def load(path: Path, attribute: str):
@@ -84,11 +88,18 @@ class DeepSeekV4Fp8GemmContractTests(unittest.TestCase):
         )
 
     def test_cases_cover_smoke_boundary_and_real_legacy_shape(self):
-        by_tag = {tag: case for case in SPEC.cases() for tag in case.tags}
-        self.assertEqual(
-            tuple(by_tag["smoke"].symbols[name] for name in ("m", "k", "n")),
-            (16, 128, 128),
-        )
+        smoke_shapes = {
+            tuple(case.symbols[name] for name in ("m", "k", "n"))
+            for case in SPEC.cases()
+            if "smoke" in case.tags
+        }
+        self.assertEqual(smoke_shapes, {(16, 128, 128), (16, 256, 256)})
+        by_tag = {
+            tag: case
+            for case in SPEC.cases()
+            for tag in case.tags
+            if tag != "smoke"
+        }
         self.assertEqual(
             tuple(by_tag["boundary"].symbols[name] for name in ("m", "k", "n")),
             (1, 128, 128),
@@ -209,6 +220,27 @@ class DeepSeekV4Fp8GemmContractTests(unittest.TestCase):
         self.assertEqual(source.parts[-2:], result.parts[-2:])
         self.assertEqual(candidate_root, source)
 
+    def test_reference_copy_control_candidate_is_discoverable_and_mirrored(self):
+        reference_source = (REFERENCE_ROOT / "implementation.py").read_bytes()
+        candidate_source = (
+            CONTROL_CANDIDATE_ROOT / "implementation.py"
+        ).read_bytes()
+        self.assertEqual(candidate_source, reference_source)
+        snapshot = FilesystemRegistry(ROOT).discover()
+        candidate = next(
+            item
+            for item in snapshot.candidates[OPERATOR_ID]
+            if item.implementation_id == CONTROL_CANDIDATE_ID
+        )
+        self.assertEqual(
+            candidate.source_hash, compute_source_hash(CONTROL_CANDIDATE_ROOT)
+        )
+        source = candidate_source_path(ROOT, OPERATOR_ID, CONTROL_CANDIDATE_ID)
+        result = candidate_result_path(
+            ROOT / "results", OPERATOR_ID, CONTROL_CANDIDATE_ID
+        )
+        self.assertEqual(source.parts[-2:], result.parts[-2:])
+
     def test_documented_cli_commands_have_nonempty_dry_run_plans(self):
         commands = (
             (
@@ -226,7 +258,7 @@ class DeepSeekV4Fp8GemmContractTests(unittest.TestCase):
                 "--tag", "representative", "--dry-run",
             ),
         )
-        expected_jobs = (1, 9, 3)
+        expected_jobs = (2, 12, 3)
         for arguments, count in zip(commands, expected_jobs):
             with self.subTest(arguments=arguments):
                 stdout, stderr = io.StringIO(), io.StringIO()

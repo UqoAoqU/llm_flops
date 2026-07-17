@@ -73,6 +73,13 @@ class DeepSeekV4Fp8GemmNtSpec:
                 timeout_s=600,
             ),
             CaseSpec(
+                case_id="smoke_m16_k256_n256",
+                symbols={"m": 16, "k": 256, "n": 256, "scale_block": SCALE_BLOCK},
+                seed=17,
+                tags=frozenset({"smoke"}),
+                timeout_s=600,
+            ),
+            CaseSpec(
                 case_id="boundary_m1_k128_n128",
                 symbols={"m": 1, "k": 128, "n": 128, "scale_block": SCALE_BLOCK},
                 seed=23,
