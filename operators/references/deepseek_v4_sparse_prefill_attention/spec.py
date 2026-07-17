@@ -14,6 +14,18 @@ TOLERANCE = 0.08
 LEGACY_MAPPING = {"adapter_name": "Sparse Prefill Attention", "backend": "sgl-kernel FlashMLA sparse_fwd", "instances": 60, "raw_context": 65536, "topk": 1024}
 
 
+def _projection_cases():
+    return tuple(CaseSpec(
+        f"prefill__sparse_prefill_attention__m{m}__ctx65536__fp8_mxfp8",
+        {"query_tokens": m, "raw_context": 65536, "compression_ratio": 1, "topk": 1024,
+         "page_size": 64, "heads": 128, "head_dim": 512, "phase": "prefill",
+         "quant_profile": "fp8_mxfp8", "model_input": m,
+         "projection_adapter_id": "sparse_prefill_attention"}, 233,
+        frozenset({"model_projection", "deepseek_v4_prefill", "phase_prefill",
+                   "quant_profile_fp8_mxfp8", f"m_{m}", "context_65536", "performance_only"}), 1800)
+        for m in (1024, 2048, 4096))
+
+
 def _torch():
     return importlib.import_module("torch")
 
@@ -101,7 +113,7 @@ class DeepSeekV4SparsePrefillAttentionSpec:
             CaseSpec("boundary_short_index_c128", {"query_tokens": 1, "raw_context": 257, "compression_ratio": 128, "topk": 1, "page_size": 64, "heads": 128, "head_dim": 512}, 113, frozenset({"boundary", "prefill", "short_index", "unsupported"}), 600),
             CaseSpec("boundary_empty_index", {"query_tokens": 1, "raw_context": 1, "compression_ratio": 4, "topk": 0, "page_size": 64, "heads": 128, "head_dim": 512}, 127, frozenset({"boundary", "minimum", "prefill", "empty_index", "unsupported"}), 600),
             CaseSpec("representative_prefill_q1024_context65536", {"query_tokens": 1024, "raw_context": 65536, "compression_ratio": 1, "topk": 1024, "page_size": 64, "heads": 128, "head_dim": 512}, 131, frozenset({"representative", "legacy", "prefill", "performance_only"}), 1800),
-        )
+        ) + _projection_cases()
 
     @staticmethod
     def _validate(symbols):

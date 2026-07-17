@@ -39,6 +39,7 @@ class ArtifactWriterTests(unittest.TestCase):
             "results.csv",
             "correctness_outputs.csv",
             "performance_samples.csv",
+            "model_projection.csv",
             "logs/controller.jsonl",
             "logs/worker.jsonl",
             "logs/stdout.log",

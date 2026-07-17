@@ -27,7 +27,7 @@
 - [代码实现导读](implementation.md)：源码模块、关键数据模型和扩展路径；
 - [结果目录与恢复](result-layout.md)：镜像目录、manifest、日志与原子写入；
 - [CSV Schema](csv-schema.md)：`results.csv`、`correctness_outputs.csv`、
-  `performance_samples.csv` 和索引表的稳定字段；
+  `performance_samples.csv`、`model_projection.csv` 和索引表的稳定字段；
 - [旧 benchmark 入口](legacy-launchers.md)：仍受支持的 `run.sh` 和 GLM-5 脚本；
 - [开发与测试](development.md) 与 [贡献指南](../CONTRIBUTING.md)。
 

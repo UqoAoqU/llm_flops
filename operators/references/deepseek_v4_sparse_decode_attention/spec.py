@@ -18,6 +18,23 @@ LEGACY_MAPPINGS = (
 )
 
 
+def _projection_cases():
+    values = []
+    for batch in (16, 32):
+        for adapter_id, ratio, page_size in (("sparse_decode_attention_c4", 4, 64),
+                                                ("sparse_decode_attention_c128", 128, 2)):
+            values.append(CaseSpec(
+                f"decode__{adapter_id}__m{batch}__ctx65536__fp8_mxfp8",
+                {"batch": batch, "raw_context": 65536, "compression_ratio": ratio,
+                 "page_size": page_size, "heads": 128, "head_dim": 512, "phase": "decode",
+                 "quant_profile": "fp8_mxfp8", "model_input": batch,
+                 "projection_adapter_id": adapter_id}, 239,
+                frozenset({"model_projection", "deepseek_v4_decode", "phase_decode",
+                           "quant_profile_fp8_mxfp8", f"m_{batch}", "context_65536",
+                           "c4" if ratio == 4 else "c128", "performance_only"}), 1800))
+    return tuple(values)
+
+
 def _runtime():
     torch = importlib.import_module("torch")
     flash = importlib.import_module("sgl_kernel.flash_mla")
@@ -124,7 +141,7 @@ class DeepSeekV4SparseDecodeAttentionSpec:
             CaseSpec("boundary_min_context", {"batch": 2, "raw_context": 1, "compression_ratio": 4, "page_size": 64, "heads": 128, "head_dim": 512}, 149, frozenset({"boundary", "decode", "minimum"}), 600),
             CaseSpec("representative_decode_c4_b16_context65536", {"batch": 16, "raw_context": 65536, "compression_ratio": 4, "page_size": 64, "heads": 128, "head_dim": 512}, 151, frozenset({"representative", "legacy", "decode", "c4"}), 1800),
             CaseSpec("representative_decode_c128_b16_context65536", {"batch": 16, "raw_context": 65536, "compression_ratio": 128, "page_size": 2, "heads": 128, "head_dim": 512}, 157, frozenset({"representative", "legacy", "decode", "c128"}), 1800),
-        )
+        ) + _projection_cases()
 
     @staticmethod
     def _validate(symbols):

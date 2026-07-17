@@ -25,7 +25,7 @@ from .registry import (
     selected_registry_issues,
 )
 from .selectors import Selectors
-from .reporting import (ArtifactError, ResumeMismatchError, summarize_evaluation,
+from .reporting import (ArtifactError, ResumeMismatchError, summarize_evaluation, summarize_run,
                         CompareCompatibilityError, compare_artifacts)
 from .reporting.csv_writer import CsvContractError
 from .ids import evaluation_result_path
@@ -115,6 +115,7 @@ def build_parser() -> argparse.ArgumentParser:
     summary_parser.add_argument("--operator")
     summary_parser.add_argument("--candidate")
     summary_parser.add_argument("--evaluation")
+    summary_parser.add_argument("--run", dest="summary_run")
     summary_parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     compare_parser = commands.add_parser("compare", help="compare compatible performance artifacts")
     current = compare_parser.add_mutually_exclusive_group(required=True)
@@ -237,20 +238,30 @@ def main(
             arguments.candidate,
             arguments.evaluation,
         )
-        if arguments.target is not None and any(identity_values):
+        if arguments.target is not None and (any(identity_values) or arguments.summary_run):
             print("summarize target and identity selectors are mutually exclusive", file=sys.stderr)
             return 2
-        if arguments.target is None and not all(identity_values):
+        if arguments.summary_run and any(identity_values):
+            print("summarize --run and evaluation identity selectors are mutually exclusive", file=sys.stderr)
+            return 2
+        if arguments.target is None and not arguments.summary_run and not all(identity_values):
             print(
                 "summarize requires a target or --operator/--candidate/--evaluation",
                 file=sys.stderr,
             )
             return 2
+        output_root = arguments.output_root
+        if not output_root.is_absolute():
+            output_root = root / output_root
+        if arguments.summary_run:
+            try:
+                print(summarize_run(output_root, arguments.summary_run), end="")
+            except (OSError, CsvContractError, ValueError) as error:
+                print(f"summary error: {error}", file=sys.stderr)
+                return 2
+            return 0
         target = arguments.target
         if target is None:
-            output_root = arguments.output_root
-            if not output_root.is_absolute():
-                output_root = root / output_root
             target = evaluation_result_path(
                 output_root,
                 arguments.operator,
@@ -361,7 +372,7 @@ def main(
                     arguments.suite or "smoke",
                     selectors,
                     output_root=output_root,
-                    mode=arguments.mode or "correctness",
+                    mode=arguments.mode,
                     seeds=tuple(arguments.seed),
                     evaluation_id=arguments.evaluation_id,
                     performance_timer=arguments.timer,

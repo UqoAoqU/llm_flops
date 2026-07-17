@@ -20,6 +20,7 @@ results/
         ├── results.csv
         ├── correctness_outputs.csv
         ├── performance_samples.csv
+        ├── model_projection.csv
         ├── summary.md
         ├── diagnostics/
         └── logs/
@@ -54,6 +55,7 @@ interrupted -> running          # 仅兼容 resume
 - `results.csv`：每个 `operator × candidate × case × seed` 一行汇总；
 - `correctness_outputs.csv`：每个 normalized output path 一行；
 - `performance_samples.csv`：reference/candidate 每个原始计时样本一行；
+- `model_projection.csv`：可选模型投影；保留 per-call，并单独记录 instances 与 model-ms；
 - `history.csv`：该 candidate 已完成 evaluation 的追加历史；
 - `latest.json`：按 completion time 和 evaluation ID 指向最新 complete evaluation；
 - `run_index.csv`：把 run ID 映射到一个或多个镜像 evaluation 路径。

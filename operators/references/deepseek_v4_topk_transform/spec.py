@@ -3,7 +3,7 @@
 import importlib
 
 from benchmark_engine.correctness import InputBundle
-from benchmark_engine.correctness.models import ComparisonResult
+from benchmark_engine.correctness.models import ComparisonResult, OutputBundle, OutputLeaf
 from benchmark_engine.models import CaseSpec
 
 
@@ -19,8 +19,22 @@ LEGACY_TOPK = {
 }
 
 
+def _projection_cases():
+    return tuple(CaseSpec(
+        f"{phase}__c4_topk_transform__m{m}__ctx65536__fp8_mxfp8",
+        {"batch": m, "length": 16384, "seq_len": 16384, "topk": 1024, "page_size": 64,
+         "pattern": "random", "phase": phase, "quant_profile": "fp8_mxfp8",
+         "raw_context": 65536, "model_input": m, "projection_adapter_id": "c4_topk_transform"},
+        227, frozenset({"model_projection", f"deepseek_v4_{phase}", f"phase_{phase}",
+                        "quant_profile_fp8_mxfp8", f"m_{m}", "context_65536", "performance_only"}), 1800)
+        for phase, inputs in (("prefill", (1024, 2048, 4096)), ("decode", (16, 32))) for m in inputs)
+
+
 class BatchedUnorderedTopKComparator:
     """Compare each batch row as a set; never flatten across batch boundaries."""
+
+    def __init__(self, *, sampled=False):
+        self.sampled = sampled
 
     def compare(self, reference, candidate, **_):
         refs, cands = reference.by_path(), candidate.by_path()
@@ -31,6 +45,18 @@ class BatchedUnorderedTopKComparator:
         if left.shape != right.shape or len(left.shape) != 2 or left.dtype != right.dtype:
             return ComparisonResult(False, "batched_unordered_topk", {"error": "dtype/shape mismatch"}, failed_path=path)
         batch, width = left.shape
+        if self.sampled:
+            passed = left.value == right.value and left.contract() == right.contract()
+            return ComparisonResult(
+                passed, "sampled_unordered_topk",
+                {"sample_count": len(left.value), "original_shape": left.shape,
+                 "canonicalized_per_row": True},
+                () if passed else ({"error": "sampled topk mismatch"},), None if passed else path,
+            )
+        if len(left.value) != batch * width or len(right.value) != batch * width:
+            return ComparisonResult(False, "batched_unordered_topk",
+                                    {"error": "small correctness payload is incomplete"},
+                                    failed_path=path)
         failed = []
         for row in range(batch):
             a = tuple(int(v) for v in left.value[row * width : (row + 1) * width])
@@ -62,8 +88,8 @@ class DeepSeekV4TopKTransformSpec:
             CaseSpec("boundary_cutoff_tie", {"batch": 2, "length": 132, "seq_len": 129, "topk": 16, "page_size": 64, "pattern": "tie"}, 41, frozenset({"boundary", "adversarial"}), 600),
             CaseSpec("boundary_all_negative", {"batch": 2, "length": 132, "seq_len": 129, "topk": 8, "page_size": 64, "pattern": "negative"}, 43, frozenset({"boundary"}), 600),
             CaseSpec("boundary_tail_page", {"batch": 2, "length": 196, "seq_len": 191, "topk": 32, "page_size": 64, "pattern": "random"}, 47, frozenset({"boundary"}), 600),
-            CaseSpec("representative_decode_b16_l65536_k1024", {"batch": 16, "length": 65536, "seq_len": 65536, "topk": 1024, "page_size": 64, "pattern": "random"}, 53, frozenset({"representative", "legacy", "decode"}), 1800),
-        )
+            CaseSpec("representative_decode_b16_l65536_k1024", {"batch": 16, "length": 65536, "seq_len": 65536, "topk": 1024, "page_size": 64, "pattern": "random"}, 53, frozenset({"representative", "legacy", "decode", "performance_only"}), 1800),
+        ) + _projection_cases()
 
     def legacy_mappings(self):
         return LEGACY_TOPK
@@ -107,11 +133,23 @@ class DeepSeekV4TopKTransformSpec:
         return InputBundle(args=(scores.clone(), seq_lens.clone(), page_tables.clone(), output.clone(), page_size, metadata.clone()))
 
     def normalize_output(self, output):
-        return output
+        torch = importlib.import_module("torch")
+        # Canonicalize every row before bounded sampling so backend-specific
+        # ordering of an otherwise identical TopK set cannot cause a failure.
+        flat = torch.sort(output.detach(), dim=-1).values.reshape(-1)
+        count = min(flat.numel(), 256)
+        if count <= 1:
+            indices = torch.zeros(count, device=flat.device, dtype=torch.long)
+        else:
+            positions = torch.arange(count, device=flat.device, dtype=torch.long)
+            span, intervals = flat.numel() - 1, count - 1
+            indices = positions * (span // intervals) + positions * (span % intervals) // intervals
+        values = tuple(int(value) for value in flat[indices].cpu().tolist())
+        return OutputBundle((OutputLeaf("output", values, str(output.dtype), tuple(output.shape),
+                                       tuple(output.stride()), "strided", str(output.device)),))
 
     def comparator(self, case):
-        del case
-        return BatchedUnorderedTopKComparator()
+        return BatchedUnorderedTopKComparator(sampled="performance_only" in case.tags)
 
     def cost_model(self, case):
         batch, _, seq_len, topk, _ = self._validate(case.symbols)

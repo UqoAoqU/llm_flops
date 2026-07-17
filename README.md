@@ -62,6 +62,22 @@ artifact 链路：
 ./bench.sh compare --run RUN_ID --baseline-run BASELINE_RUN_ID
 ```
 
+## DeepSeek V4 model suites
+
+Model suites run migrated FP8 operators at legacy shapes while keeping raw
+kernel timing separate from model projection:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 ./bench.sh run --suite deepseek_v4_prefill
+CUDA_VISIBLE_DEVICES=0 ./bench.sh run --suite deepseek_v4_decode
+./bench.sh summarize --run RUN_ID
+```
+
+Prefill covers M=1024/2048/4096 and decode covers batch 16/32, both at raw
+context 65536. Phase, quant profile, model input, context, and adapter identity
+are explicit case metadata. Missing or unavailable legacy adapters are listed
+and never counted as zero in the measured partial total.
+
 ## 评测一个 candidate
 
 Candidate 放在：
@@ -110,6 +126,7 @@ results/
         ├── results.csv
         ├── correctness_outputs.csv
         ├── performance_samples.csv
+        ├── model_projection.csv
         ├── summary.md
         ├── diagnostics/
         └── logs/

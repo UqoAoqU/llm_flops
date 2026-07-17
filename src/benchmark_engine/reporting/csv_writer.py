@@ -293,6 +293,14 @@ PERFORMANCE_SAMPLE_FIELDNAMES = (
     "power_w",
 )
 
+MODEL_PROJECTION_FIELDNAMES = (
+    "schema_version", "run_id", "evaluation_id", "result_id", "suite_id",
+    "projection_id", "phase", "quant_profile", "model_input", "raw_context",
+    "operator_id", "candidate_id", "case_id", "adapter_id", "display_name",
+    "backend", "kind", "legacy_shape", "instances", "implementation_role", "per_call_ms",
+    "projected_model_ms", "status", "reason",
+)
+
 _RESULTS_V1_FIELDNAMES = tuple(
     name
     for name in _RESULTS_V2_FIELDNAMES
@@ -648,6 +656,27 @@ PERFORMANCE_SAMPLES_SCHEMA = CsvSchema(
     migrate_previous=_migrate_performance_samples,
 )
 
+MODEL_PROJECTION_SCHEMA = CsvSchema(
+    "model_projection.csv",
+    _columns(
+        MODEL_PROJECTION_FIELDNAMES,
+        required=frozenset({
+            "schema_version", "run_id", "evaluation_id", "result_id", "suite_id",
+            "projection_id", "phase", "quant_profile", "model_input", "raw_context",
+            "operator_id", "candidate_id", "case_id", "adapter_id", "display_name",
+            "backend", "kind", "legacy_shape", "instances", "implementation_role", "status",
+        }),
+        integers=frozenset({"schema_version", "model_input", "raw_context", "instances"}),
+        numbers=frozenset({"per_call_ms", "projected_model_ms"}),
+        allowed_values={
+            "implementation_role": frozenset({"reference", "candidate"}),
+            "status": frozenset({"measured", "correctness_failed", "unsupported",
+                                 "unavailable", "not_measured"}),
+        },
+    ),
+    ("result_id", "adapter_id", "implementation_role"),
+)
+
 
 def _fsync_directory(directory: Path) -> None:
     """Best-effort directory fsync (not available on every platform)."""
@@ -880,6 +909,36 @@ class AtomicCsvTable:
             self._write_rows(current)
         return inserted
 
+    def replace_partitions(
+        self,
+        rows: Iterable[Mapping[str, object]],
+        *,
+        partition_fields: tuple[str, ...],
+    ) -> int:
+        """Atomically replace derived rows for one or more incomplete results.
+
+        This is intended for artifacts written before a separate completion
+        marker. A resumed result may produce different timings, so stale rows
+        must be replaced rather than treated as a key conflict.
+        """
+
+        if not partition_fields or not set(partition_fields).issubset(self.schema.fieldnames):
+            raise CsvContractError("partition_fields must name schema columns")
+        replacements = [self.normalise(row) for row in rows]
+        if not replacements:
+            return 0
+        partitions = {tuple(row[field] for field in partition_fields) for row in replacements}
+        replacement_keys = [self._key(row) for row in replacements]
+        if len(replacement_keys) != len(set(replacement_keys)):
+            raise CsvConflictError("replacement rows contain duplicate primary keys")
+        current = [
+            row for row in self.read_rows()
+            if tuple(row[field] for field in partition_fields) not in partitions
+        ]
+        current.extend(replacements)
+        self._write_rows(current)
+        return len(replacements)
+
     def normalise(self, row: Mapping[str, object]) -> dict[str, str]:
         unknown = set(row).difference(self.schema.fieldnames)
         if unknown:
@@ -940,6 +999,8 @@ __all__ = [
     "CsvConflictError",
     "CsvContractError",
     "CsvSchema",
+    "MODEL_PROJECTION_FIELDNAMES",
+    "MODEL_PROJECTION_SCHEMA",
     "PERFORMANCE_SAMPLES_SCHEMA",
     "PERFORMANCE_SAMPLES_SCHEMA_V1",
     "PERFORMANCE_SAMPLES_SCHEMA_V2",

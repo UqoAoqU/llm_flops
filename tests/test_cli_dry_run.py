@@ -5,7 +5,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import benchmark_environment
 from benchmark_engine.cli import main
@@ -79,6 +79,26 @@ class CliDryRunTest(unittest.TestCase):
             self.assertEqual(code, 0, stderr)
             payload = json.loads(stdout)
             self.assertEqual({job["mode"] for job in payload["jobs"]}, {"performance"})
+
+    def test_actual_run_preserves_suite_mode_unless_cli_overrides_it(self):
+        outcome = MagicMock(run_id="run_0123456789abcdef", passed=0, failed=0,
+                            infrastructure_failures=0, evaluation_paths=(), exit_code=0)
+        plan, snapshot, environment = MagicMock(), MagicMock(), {}
+        invocations = (
+            (("--suite", "deepseek_v4_prefill"), None),
+            (("--suite", "deepseek_v4_decode"), None),
+            (("--suite", "smoke", "--mode", "correctness"), "correctness"),
+        )
+        for arguments, expected in invocations:
+            with self.subTest(arguments=arguments), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                self.repository(root)
+                with patch("benchmark_engine.cli.build_execution_plan",
+                           return_value=(plan, snapshot, environment)) as build, \
+                     patch("benchmark_engine.cli.execute_plan", return_value=outcome):
+                    code, _, stderr = self.call(root, "run", *arguments)
+                self.assertEqual((code, stderr), (0, ""))
+                self.assertEqual(build.call_args.kwargs["mode"], expected)
 
 
 if __name__ == "__main__":

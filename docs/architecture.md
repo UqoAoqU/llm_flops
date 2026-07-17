@@ -21,6 +21,13 @@ CLI
                          summarize / compare / resume
 ```
 
+Model projection is a derived layer after kernel evaluation. The DeepSeek V4
+mapping converts explicit case metadata and legacy adapter semantics into
+instances, display/backend metadata, and `per_call_ms * instances`. It never
+changes shapes, correctness, timers, JIT/build stages, or raw samples. Each
+evaluation owns a recoverable `model_projection.csv`; run-level totals join all
+mirrored evaluations through `run_index.csv`.
+
 ## 核心边界
 
 - **Registry** 只解析 manifest、检查 entrypoint 文件和计算 source hash，不导入

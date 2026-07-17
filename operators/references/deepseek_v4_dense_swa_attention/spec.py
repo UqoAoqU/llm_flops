@@ -17,6 +17,18 @@ LEGACY_MAPPINGS = (
 )
 
 
+def _projection_cases():
+    return tuple(CaseSpec(
+        f"decode__dense_swa_attention__m{batch}__ctx65536__fp8_mxfp8",
+        {"batch": batch, "raw_context": 65536, "window": 128, "page_size": 128,
+         "heads": 128, "head_dim": 512, "phase": "decode", "quant_profile": "fp8_mxfp8",
+         "model_input": batch, "projection_adapter_id": "dense_swa_attention"}, 241,
+        frozenset({"model_projection", "deepseek_v4_decode", "phase_decode",
+                   "quant_profile_fp8_mxfp8", f"m_{batch}", "context_65536", "swa",
+                   "performance_only"}), 1800)
+        for batch in (16, 32))
+
+
 def _runtime():
     torch = importlib.import_module("torch")
     flash = importlib.import_module("sgl_kernel.flash_mla")
@@ -106,7 +118,7 @@ class DeepSeekV4DenseSwaAttentionSpec:
             CaseSpec("smoke_tail_window", {"batch": 2, "raw_context": 65, "window": 128, "page_size": 128, "heads": 128, "head_dim": 512}, 163, frozenset({"smoke", "boundary", "decode", "swa", "tail_page"}), 600),
             CaseSpec("boundary_min_context", {"batch": 2, "raw_context": 1, "window": 128, "page_size": 128, "heads": 128, "head_dim": 512}, 167, frozenset({"boundary", "minimum", "decode", "swa"}), 600),
             CaseSpec("representative_decode_b16_context65536", {"batch": 16, "raw_context": 65536, "window": 128, "page_size": 128, "heads": 128, "head_dim": 512}, 173, frozenset({"representative", "legacy", "decode", "swa"}), 1800),
-        )
+        ) + _projection_cases()
 
     @staticmethod
     def _validate(symbols):

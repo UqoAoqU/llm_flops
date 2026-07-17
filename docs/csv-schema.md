@@ -127,6 +127,27 @@ are emitted in sorted order. For example,
 the flat map `{"output.logits":"float32"}`, while the corresponding shape map
 may be `{"output.logits":[2,128]}`.
 
+## `model_projection.csv`
+
+Projection rows are derived from per-call medians; raw samples and
+`results.csv` remain unchanged. The primary key is
+`(result_id, adapter_id, implementation_role)`. Stable columns are:
+
+`schema_version, run_id, evaluation_id, result_id, suite_id, projection_id,
+phase, quant_profile, model_input, raw_context, operator_id, candidate_id,
+case_id, adapter_id, display_name, backend, kind, legacy_shape, instances,
+implementation_role, per_call_ms, projected_model_ms, status, reason`.
+
+`projected_model_ms` is exactly `per_call_ms * instances` and exists only for
+`measured` rows. Other statuses are `correctness_failed`, `unsupported`,
+`unavailable`, and `not_measured`; blank timing fields represent missing data.
+The table is atomic and precedes the `results.csv` completion marker. Resume
+atomically replaces stale projection rows for an incomplete `result_id`.
+
+Run summaries join mirrored evaluations via `run_index.csv`. Expected but
+missing adapters are reported from the model mapping and never synthesized as
+zero-time rows.
+
 ## Index CSVs
 
 `results/run_index.csv` has the stable order `schema_version, run_id,

@@ -6,7 +6,80 @@ from collections.abc import Mapping
 import json
 from pathlib import Path
 
-from .csv_writer import AtomicCsvTable, RESULTS_SCHEMA
+from benchmark_engine.ids import validate_run_id
+from benchmark_engine.projection import DEEPSEEK_V4_PROJECTION
+
+from .csv_writer import AtomicCsvTable, MODEL_PROJECTION_SCHEMA, RESULTS_SCHEMA
+
+
+def _projection_lines(rows: list[dict[str, str]], *, complete_model: bool) -> list[str]:
+    if not rows:
+        return ["## Model projection", "", "- Status: unavailable (no projection artifact)", ""]
+    lines = ["## DeepSeek V4 Pro model projection", ""]
+    groups = sorted({(row["phase"], row["quant_profile"], int(row["model_input"]),
+                      int(row["raw_context"]), row.get("_seed", "unknown"),
+                      row.get("evaluation_id", "unknown"))
+                     for row in rows})
+    for phase, profile, model_input, context, seed, evaluation_id in groups:
+        selected = [row for row in rows
+                    if (row["phase"], row["quant_profile"], int(row["model_input"]),
+                        int(row["raw_context"]), row.get("_seed", "unknown"),
+                        row.get("evaluation_id", "unknown"))
+                    == (phase, profile, model_input, context, seed, evaluation_id)]
+        expected = DEEPSEEK_V4_PROJECTION.mappings(phase, profile)
+        candidates = {mapping.adapter_id: sorted(
+            (row for row in selected if row["implementation_role"] == "candidate"
+             and row["adapter_id"] == mapping.adapter_id),
+            key=lambda row: (row["candidate_id"], row.get("result_id", "")),
+        ) for mapping in expected}
+        references = {mapping.adapter_id: sorted(
+            (row for row in selected if row["implementation_role"] == "reference"
+             and row["adapter_id"] == mapping.adapter_id),
+            key=lambda row: (row["candidate_id"], row.get("result_id", "")),
+        ) for mapping in expected}
+        lines.extend((f"### {phase} / {profile} / input={model_input} / context={context} / seed={seed} / evaluation={evaluation_id}", "",
+                      "| Operator | Candidate | Backend | Instances | Candidate ms/call | Candidate model-ms | Status |",
+                      "|---|---|---|---:|---:|---:|---|"))
+        candidate_total = 0.0
+        reference_total = 0.0
+        missing = []
+        unavailable = []
+        ambiguous = []
+        for mapping in expected:
+            candidate_rows = candidates[mapping.adapter_id]
+            reference_rows = references[mapping.adapter_id]
+            candidate_ids = sorted({row["candidate_id"] for row in candidate_rows})
+            candidate_label = ", ".join(candidate_ids) if candidate_ids else "-"
+            if not candidate_rows:
+                status = "missing" if complete_model else "not in this evaluation"
+                call_ms = model_ms = "-"
+                missing.append(mapping.display_name)
+            elif len(candidate_rows) != 1:
+                status = "ambiguous"
+                call_ms = model_ms = "-"
+                ambiguous.append(f"{mapping.display_name} ({candidate_label})")
+            else:
+                row = candidate_rows[0]
+                status = row["status"] + ((f": {row['reason']}") if row.get("reason") else "")
+                call_ms = row.get("per_call_ms") or "-"
+                model_ms = row.get("projected_model_ms") or "-"
+                if row["status"] == "measured" and row.get("projected_model_ms"):
+                    candidate_total += float(row["projected_model_ms"])
+                else:
+                    unavailable.append(f"{mapping.display_name} ({row['status']})")
+                # Reference rows are paired with candidate evaluations. Count
+                # only the unique pair; ambiguous candidates must not select
+                # or duplicate a reference measurement.
+                if len(reference_rows) == 1 and reference_rows[0]["status"] == "measured" \
+                        and reference_rows[0].get("projected_model_ms"):
+                    reference_total += float(reference_rows[0]["projected_model_ms"])
+            lines.append(f"| {mapping.display_name} | {candidate_label} | {mapping.backend} | {mapping.instances} | {call_ms} | {model_ms} | {status} |")
+        lines.extend(("", f"- Candidate measured partial total: {candidate_total:.6f} ms/model",
+                      f"- Reference measured partial total: {reference_total:.6f} ms/model",
+                      f"- Missing operators: {', '.join(missing) if missing else 'none'}",
+                      f"- Unavailable/unsupported: {', '.join(unavailable) if unavailable else 'none'}",
+                      f"- Ambiguous candidates: {', '.join(ambiguous) if ambiguous else 'none'}", ""))
+    return lines
 
 
 def render_summary(manifest: Mapping[str, object]) -> str:
@@ -81,7 +154,13 @@ def summarize_evaluation(path: Path) -> str:
     lines.extend(f"- {name}: {performance_counts[name]}" for name in sorted(performance_counts))
     lines.extend(("", "## Performance gate counts", ""))
     lines.extend(f"- {name}: {gate_counts[name]}" for name in sorted(gate_counts))
-    lines.extend(("", "## Model projection", "", "- Status: not available for this operator/suite", ""))
+    projection_rows = AtomicCsvTable(
+        target.parent / MODEL_PROJECTION_SCHEMA.filename, MODEL_PROJECTION_SCHEMA
+    ).read_rows()
+    seeds = {row["result_id"]: row["seed"] for row in rows}
+    projection_rows = [dict(row, _seed=seeds.get(row["result_id"], "unknown"))
+                       for row in projection_rows]
+    lines.extend(("", *_projection_lines(projection_rows, complete_model=False)))
     failures = [row for row in rows if row["correctness_status"] != "passed"]
     if failures:
         lines.extend(("", "## Failures", ""))
@@ -105,4 +184,35 @@ def summarize_evaluation(path: Path) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-__all__ = ["render_summary", "summarize_evaluation"]
+def summarize_run(output_root: Path, run_id: str) -> str:
+    """Aggregate every mirrored evaluation registered for one run."""
+
+    from .artifact_writer import RUN_INDEX_SCHEMA
+
+    validate_run_id(run_id)
+    root = Path(output_root).resolve()
+    index_rows = AtomicCsvTable(root / RUN_INDEX_SCHEMA.filename, RUN_INDEX_SCHEMA).read_rows()
+    selected = [row for row in index_rows if row["run_id"] == run_id]
+    if not selected:
+        raise ValueError(f"run_id not found in run_index.csv: {run_id}")
+    projection_rows: list[dict[str, str]] = []
+    result_count = 0
+    for index_row in sorted(selected, key=lambda row: (row["operator_id"], row["candidate_id"], row["evaluation_id"])):
+        directory = (root / index_row["relative_path"]).resolve()
+        if root not in directory.parents:
+            raise ValueError("run index contains a path outside output root")
+        result_rows = AtomicCsvTable(directory / RESULTS_SCHEMA.filename, RESULTS_SCHEMA).read_rows()
+        result_count += len(result_rows)
+        seeds = {row["result_id"]: row["seed"] for row in result_rows}
+        projection_rows.extend(
+            dict(row, _seed=seeds.get(row["result_id"], "unknown"))
+            for row in AtomicCsvTable(directory / MODEL_PROJECTION_SCHEMA.filename,
+                                      MODEL_PROJECTION_SCHEMA).read_rows()
+        )
+    lines = ["# Benchmark run summary", "", f"- Run: `{run_id}`",
+             f"- Evaluations: {len(selected)}", f"- Results: {result_count}", ""]
+    lines.extend(_projection_lines(projection_rows, complete_model=True))
+    return "\n".join(lines).rstrip() + "\n"
+
+
+__all__ = ["render_summary", "summarize_evaluation", "summarize_run"]

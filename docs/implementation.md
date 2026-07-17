@@ -74,6 +74,10 @@ throughput units 与 candidate median latency 组合，生成 `tflops`、
 日志和原子替换。`csv_writer.py` 是 CSV 列顺序、schema 升级、枚举和主键冲突规则的
 代码权威。`summary.py` 只读生成汇总，`compare.py` 先验证兼容性再计算性能差异。
 
+`projection/base.py` 定义通用只读投影协议，`projection/deepseek_v4.py` 保存
+legacy adapter 到稳定 operator/case 的映射。投影仅使用已持久化 per-call median
+乘以 instances；跨 operator 的模型 partial total 由 `run_index.csv` 在 run 级聚合。
+
 所有 artifact 写入遵守三个不变量：
 
 - 同一主键和完全相同行可幂等重放；同键不同内容必须报错；

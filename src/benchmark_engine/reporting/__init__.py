@@ -23,11 +23,12 @@ from .csv_writer import (
     CsvConflictError,
     CsvContractError,
     CsvSchema,
+    MODEL_PROJECTION_SCHEMA,
     PERFORMANCE_SAMPLES_SCHEMA,
     RESULTS_SCHEMA,
     atomic_write_text,
 )
-from .summary import render_summary, summarize_evaluation
+from .summary import render_summary, summarize_evaluation, summarize_run
 from .compare import CompareCompatibilityError, compare_artifacts
 
 __all__ = [
@@ -47,6 +48,7 @@ __all__ = [
     "EvaluationState",
     "HISTORY_SCHEMA",
     "ManifestContractError",
+    "MODEL_PROJECTION_SCHEMA",
     "PERFORMANCE_SAMPLES_SCHEMA",
     "RESULTS_SCHEMA",
     "RUN_INDEX_SCHEMA",
@@ -56,6 +58,7 @@ __all__ = [
     "atomic_write_text",
     "render_summary",
     "summarize_evaluation",
+    "summarize_run",
     "compare_artifacts",
     "validate_resume_compatibility",
 ]

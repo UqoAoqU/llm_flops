@@ -28,6 +28,9 @@ class ReadmeCommandTests(unittest.TestCase):
                 "quickstart__20260716T120000Z__4279e756", "--evaluation",
                 "20260716T120000Z__abcdef123456__0123456789ab",
             ),
+            ("summarize", "--run", "run_0123456789abcdef0123456789abcdef"),
+            ("run", "--suite", "deepseek_v4_prefill", "--dry-run"),
+            ("run", "--suite", "deepseek_v4_decode", "--dry-run"),
         )
         for command in commands:
             with self.subTest(command=command):

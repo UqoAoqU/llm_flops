@@ -54,6 +54,15 @@ bench run [--suite ID] [--mode all|correctness|performance]
 ./bench.sh run --resume RUN_ID
 ```
 
+DeepSeek V4 model suites use explicit phase/profile/context case metadata:
+
+```bash
+./bench.sh run --suite deepseek_v4_prefill --dry-run
+./bench.sh run --suite deepseek_v4_decode --dry-run
+CUDA_VISIBLE_DEVICES=0 ./bench.sh run --suite deepseek_v4_prefill
+CUDA_VISIBLE_DEVICES=0 ./bench.sh run --suite deepseek_v4_decode
+```
+
 选择器 `--operator`、`--candidate`、`--case`、`--tag`、`--exclude-operator` 和
 `--seed` 可重复。同类值取 OR，不同类取 AND，exclude 最后执行。`--mode` 覆盖 suite
 mode；CLI 性能参数覆盖 suite 和 operator manifest。
@@ -88,7 +97,12 @@ Ctrl-C 退出 130。
 ```bash
 ./bench.sh summarize results/OP/CANDIDATE/EVALUATION
 ./bench.sh summarize --operator OP --candidate CANDIDATE --evaluation EVALUATION
+./bench.sh summarize --run RUN_ID
 ```
+
+Evaluation/path forms summarize one mirrored evaluation. `--run` resolves all
+evaluations through `results/run_index.csv`; use it for a cross-operator model
+projection and its partial total, missing, unavailable, and unsupported lists.
 
 位置参数与三元身份参数二选一。输出 correctness、performance、gate、诊断路径和
 复现信息。

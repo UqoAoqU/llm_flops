@@ -10,7 +10,7 @@ from benchmark_engine.correctness import (
     QuantizedComparator,
     Tolerance,
 )
-from benchmark_engine.correctness.models import ComparisonResult, OutputBundle
+from benchmark_engine.correctness.models import ComparisonResult, OutputBundle, OutputLeaf
 from benchmark_engine.models import CaseSpec
 
 
@@ -31,6 +31,17 @@ LEGACY_INDEXER_FP8 = {
     "head_dim": HEAD_DIM,
     "weight_scale": WEIGHT_SCALE,
 }
+
+
+def _projection_cases():
+    return tuple(CaseSpec(
+        f"{phase}__c4_indexer_fp8_quant__m{m}__ctx65536__fp8_mxfp8",
+        {"batch": m, "context": 65536, "position": 65535, "pattern": "random",
+         "weight_layout": "contiguous", "phase": phase, "quant_profile": "fp8_mxfp8",
+         "raw_context": 65536, "model_input": m, "projection_adapter_id": "c4_indexer_fp8_quant"},
+        223, frozenset({"model_projection", f"deepseek_v4_{phase}", f"phase_{phase}",
+                        "quant_profile_fp8_mxfp8", f"m_{m}", "context_65536", "performance_only"}), 1800)
+        for phase, inputs in (("prefill", (1024, 2048, 4096)), ("decode", (16, 32))) for m in inputs)
 
 
 def _only(bundle, paths):
@@ -93,7 +104,7 @@ class DeepSeekV4IndexerFp8QuantSpec:
             CaseSpec("boundary_noncontiguous_weight", {"batch": 3, "context": 257, "position": 128, "pattern": "random", "weight_layout": "noncontiguous"}, 67, frozenset({"boundary"}), 600),
             CaseSpec("boundary_position_65535", {"batch": 1, "context": 65536, "position": 65535, "pattern": "random", "weight_layout": "contiguous"}, 71, frozenset({"boundary"}), 600),
             CaseSpec("representative_decode_b16_context65536", {"batch": 16, "context": 65536, "position": 65535, "pattern": "random", "weight_layout": "contiguous"}, 73, frozenset({"representative", "legacy", "decode"}), 1800),
-        )
+        ) + _projection_cases()
 
     def legacy_mappings(self):
         return LEGACY_INDEXER_FP8
@@ -140,14 +151,26 @@ class DeepSeekV4IndexerFp8QuantSpec:
 
     def normalize_output(self, output):
         q_fp8, weights = output
-        values = q_fp8.float()
-        weights_float = weights.float()
-        return {
-            "codes": q_fp8.view(_torch().uint8),
-            "values": values,
-            "weights": weights_float,
-            "effective": values * weights_float,
-        }
+        torch = _torch()
+
+        def leaf(path, tensor):
+            flat = tensor.detach().reshape(-1)
+            count = min(flat.numel(), 256)
+            if count <= 1:
+                indices = torch.zeros(count, device=flat.device, dtype=torch.long)
+            else:
+                positions = torch.arange(count, device=flat.device, dtype=torch.long)
+                span, intervals = flat.numel() - 1, count - 1
+                indices = positions * (span // intervals) + positions * (span % intervals) // intervals
+            sampled = flat[indices].cpu().tolist()
+            values = tuple(int(value) for value in sampled) if tensor.dtype == torch.uint8 else tuple(float(value) for value in sampled)
+            return OutputLeaf(path, values, str(tensor.dtype),
+                              tuple(tensor.shape), tuple(tensor.stride()), "strided", str(tensor.device))
+
+        values, weights_float = q_fp8.float(), weights.float()
+        return OutputBundle((leaf("output.codes", q_fp8.view(torch.uint8)),
+                             leaf("output.values", values), leaf("output.weights", weights_float),
+                             leaf("output.effective", values * weights_float)))
 
     def comparator(self, case):
         del case

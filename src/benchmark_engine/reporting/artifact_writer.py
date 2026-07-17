@@ -25,6 +25,7 @@ from .csv_writer import (
     CsvColumn,
     CsvContractError,
     CsvSchema,
+    MODEL_PROJECTION_SCHEMA,
     PERFORMANCE_SAMPLES_SCHEMA,
     RESULTS_SCHEMA,
     atomic_write_text,
@@ -435,6 +436,7 @@ class ArtifactWriter:
             RESULTS_SCHEMA,
             CORRECTNESS_OUTPUTS_SCHEMA,
             PERFORMANCE_SAMPLES_SCHEMA,
+            MODEL_PROJECTION_SCHEMA,
         ):
             AtomicCsvTable(
                 directory / schema.filename, schema, replace=self._replace

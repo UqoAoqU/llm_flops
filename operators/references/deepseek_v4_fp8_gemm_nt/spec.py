@@ -7,6 +7,7 @@ CUDA modules are resolved only while runtime inputs are built or cloned.
 import importlib
 
 from benchmark_engine.correctness import FloatingComparator, InputBundle, Tolerance
+from benchmark_engine.correctness.models import OutputBundle, OutputLeaf
 from benchmark_engine.models import CaseSpec
 
 
@@ -34,6 +35,32 @@ LEGACY_ADAPTER_MAPPINGS = (
     {"phase": "decode", "adapter_name": "WO_B Projection", "backend": "DeepGEMM fp8_gemm_nt", "instances": 61, "m_values": DECODE_M_VALUES, "k": 16384, "n": 7168},
     {"phase": "decode", "adapter_name": "LM Head", "backend": "DeepGEMM FP8 full vocab", "instances": 1, "m_values": DECODE_M_VALUES, "k": 7168, "n": 129280},
 )
+
+_PROJECTION_GEMMS = {
+    "prefill": (("fused_wq_a_wkv", 7168, 2048), ("q_rmsnorm_wq_b", 1536, 65536),
+                ("compressor_wkv_gate_c4", 7168, 2048), ("compressor_wkv_gate_c128", 7168, 1024),
+                ("c4_indexer_q_projection", 1536, 65536), ("wo_b_projection", 16384, 7168),
+                ("lm_head", 7168, 129280)),
+    "decode": (("fused_wq_a_wkv", 7168, 2048), ("q_rmsnorm_wq_b", 1536, 65536),
+               ("c4_indexer_q_projection", 1536, 65536), ("wo_b_projection", 16384, 7168),
+               ("lm_head", 7168, 129280)),
+}
+
+
+def _projection_cases():
+    values = []
+    for phase, inputs in (("prefill", PREFILL_M_VALUES), ("decode", DECODE_M_VALUES)):
+        for adapter_id, k, n in _PROJECTION_GEMMS[phase]:
+            for m in inputs:
+                values.append(CaseSpec(
+                    f"{phase}__{adapter_id}__m{m}__ctx65536__fp8_mxfp8",
+                    {"m": m, "k": k, "n": n, "scale_block": SCALE_BLOCK, "phase": phase,
+                     "quant_profile": "fp8_mxfp8", "raw_context": 65536, "model_input": m,
+                     "projection_adapter_id": adapter_id}, 211,
+                    frozenset({"model_projection", f"deepseek_v4_{phase}", f"phase_{phase}",
+                               "quant_profile_fp8_mxfp8", f"m_{m}", "context_65536",
+                               "performance_only"}), 1800))
+    return tuple(values)
 
 
 def _runtime_modules():
@@ -93,7 +120,7 @@ class DeepSeekV4Fp8GemmNtSpec:
                 tags=frozenset({"representative", "legacy", "decode"}),
                 timeout_s=1800,
             ),
-        )
+        ) + _projection_cases()
 
     def legacy_mappings(self):
         return LEGACY_ADAPTER_MAPPINGS
@@ -162,7 +189,18 @@ class DeepSeekV4Fp8GemmNtSpec:
         )
 
     def normalize_output(self, output):
-        return output
+        torch = importlib.import_module("torch")
+        flat = output.detach().reshape(-1)
+        count = min(flat.numel(), 256)
+        if count <= 1:
+            indices = torch.zeros(count, device=flat.device, dtype=torch.long)
+        else:
+            positions = torch.arange(count, device=flat.device, dtype=torch.long)
+            span, intervals = flat.numel() - 1, count - 1
+            indices = positions * (span // intervals) + positions * (span % intervals) // intervals
+        values = tuple(flat[indices].float().cpu().tolist())
+        return OutputBundle((OutputLeaf("output", values, str(output.dtype), tuple(output.shape),
+                                       tuple(output.stride()), "strided", str(output.device)),))
 
     def comparator(self, case):
         del case

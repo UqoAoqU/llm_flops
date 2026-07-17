@@ -25,6 +25,7 @@ from .reporting import (
 from .reporting.csv_writer import (
     AtomicCsvTable,
     CORRECTNESS_OUTPUTS_SCHEMA,
+    MODEL_PROJECTION_SCHEMA,
     PERFORMANCE_SAMPLES_SCHEMA,
     RESULTS_SCHEMA,
     atomic_write_text,
@@ -34,9 +35,26 @@ from .suite import load_suite
 from .ids import generate_result_id
 from .performance import PerformanceGateConfig, evaluate_performance_gate
 from .execution.gpu_lock import GpuLock, resolve_gpu_identity
+from .projection import DEEPSEEK_V4_PROJECTION
 
 
 PERFORMANCE_SKIP_REASON = "performance_not_implemented"
+
+
+def _projection_status(correctness, performance, error_message, performance_reason):
+    if correctness is CorrectnessStatus.UNSUPPORTED:
+        return "unsupported", str(error_message or "correctness_unsupported")
+    if correctness is CorrectnessStatus.FAILED:
+        return "correctness_failed", correctness.value
+    if correctness is not CorrectnessStatus.PASSED:
+        return "unavailable", str(error_message or correctness.value)
+    if performance is PerformanceStatus.UNSUPPORTED:
+        return "unsupported", str(performance_reason or "unsupported")
+    if performance in {PerformanceStatus.PASSED, PerformanceStatus.UNSTABLE}:
+        return "measured", None
+    if performance is PerformanceStatus.SKIPPED:
+        return "not_measured", str(performance_reason or "not_measured")
+    return "unavailable", str(error_message or performance.value)
 
 
 @dataclass(frozen=True)
@@ -833,18 +851,50 @@ def _append_result(
         "stdout_path": "logs/stdout.log",
         "stderr_path": "logs/stderr.log",
     }
-    # Per-output details are durable before results.csv acts as the completion
+    projection_mapping = DEEPSEEK_V4_PROJECTION.mapping_for_case(
+        job.identity.operator_id, job.case
+    )
+    projection_rows: list[dict[str, object]] = []
+    if projection_mapping is not None:
+        symbols = job.case.symbols
+        projection_status, projection_reason = _projection_status(
+            correctness, performance, error_message, raw_performance.get("reason")
+        )
+        for role, statistics in (("reference", reference_statistics), ("candidate", candidate_statistics)):
+            raw_per_call = statistics.get("median_ms") if projection_status == "measured" else None
+            per_call = raw_per_call if isinstance(raw_per_call, (int, float)) and not isinstance(raw_per_call, bool) else None
+            projection_rows.append({
+                "run_id": job.identity.run_id, "evaluation_id": job.identity.evaluation_id,
+                "result_id": job.result_id, "suite_id": plan.suite_id,
+                "projection_id": DEEPSEEK_V4_PROJECTION.projection_id,
+                "phase": str(symbols["phase"]), "quant_profile": str(symbols["quant_profile"]),
+                "model_input": int(symbols["model_input"]), "raw_context": int(symbols["raw_context"]),
+                "operator_id": job.identity.operator_id, "candidate_id": job.identity.candidate_id,
+                "case_id": job.case.case_id, "adapter_id": projection_mapping.adapter_id,
+                "display_name": projection_mapping.display_name, "backend": projection_mapping.backend,
+                "kind": projection_mapping.kind, "legacy_shape": json.dumps(projection_mapping.shape),
+                "instances": projection_mapping.instances,
+                "implementation_role": role, "per_call_ms": per_call,
+                "projected_model_ms": None if per_call is None else per_call * projection_mapping.instances,
+                "status": projection_status, "reason": projection_reason,
+            })
+    # Per-output/projection details are durable before results.csv acts as the completion
     # marker consumed by resume.
     if output_rows:
         AtomicCsvTable(
             job.output_dir / CORRECTNESS_OUTPUTS_SCHEMA.filename,
             CORRECTNESS_OUTPUTS_SCHEMA,
-        ).append_many(output_rows)
+        ).replace_partitions(output_rows, partition_fields=("result_id",))
     if sample_rows:
         AtomicCsvTable(
             job.output_dir / PERFORMANCE_SAMPLES_SCHEMA.filename,
             PERFORMANCE_SAMPLES_SCHEMA,
-        ).append_many(sample_rows)
+        ).replace_partitions(sample_rows, partition_fields=("result_id",))
+    if projection_rows:
+        AtomicCsvTable(
+            job.output_dir / MODEL_PROJECTION_SCHEMA.filename,
+            MODEL_PROJECTION_SCHEMA,
+        ).replace_partitions(projection_rows, partition_fields=("result_id",))
     AtomicCsvTable(job.output_dir / RESULTS_SCHEMA.filename, RESULTS_SCHEMA).append(row)
     return overall is ResultStatus.PASSED, False
 
