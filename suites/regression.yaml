@@ -6,6 +6,8 @@ operators:
 cases:
   tags: [representative]
 mode: all
+candidates:
+  include: ["quickstart__*", "pytorch_dequant__*"]
 correctness:
   seeds: [0, 1, 2]
 performance:

@@ -33,6 +33,8 @@ UUID GPU locks, formal gates, and strict comparisons.
 - [Approved design](../design.md) is the normative long-form design.
 - [Migration baseline](migration-baseline.md) records the preserved legacy
   behavior.
+- [DeepSeek V4 FP8 GEMM migration](deepseek-v4-fp8-gemm-migration.md) records
+  the first CUDA operator contract, legacy mapping, and timer parity check.
 - [Contributing](../CONTRIBUTING.md) lists change and test expectations.
 
 Legacy benchmark commands remain documented in the [repository README](../README.md).

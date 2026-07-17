@@ -13,7 +13,7 @@ DeepSeek V4 Pro Prefill、Decode 及各算子的 CUDA 性能测试。底层后�
 ./bootstrap.sh
 ./bench.sh validate --operator example_cpu_add
 ./bench.sh list --operator example_cpu_add
-./bench.sh run --suite smoke
+./bench.sh run --suite smoke --operator example_cpu_add
 ```
 
 The last command prints the `run_id` and mirrored result path. To inspect an
@@ -57,6 +57,31 @@ Exit codes are 0 for pass, 1 for a correctness or performance failure, 2 for
 usage or configuration, 3 for worker/engine infrastructure, and 130 for Ctrl-C. Every
 completed case is durable before the next case starts; resume never reruns an
 existing `result_id`. These commands need no GPU and do not change `run.sh`.
+
+### B200 FP8 GEMM smoke
+
+The CUDA smoke is deliberately separate from the five-minute CPU path because
+its first run can compile DeepGEMM kernels:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 ./bench.sh validate --operator deepseek_v4_fp8_gemm_nt
+CUDA_VISIBLE_DEVICES=0 ./bench.sh run --suite smoke \
+  --operator deepseek_v4_fp8_gemm_nt --candidate 'pytorch_dequant__*'
+CUDA_VISIBLE_DEVICES=0 ./bench.sh run --suite full --mode correctness \
+  --operator deepseek_v4_fp8_gemm_nt --candidate 'pytorch_dequant__*'
+CUDA_VISIBLE_DEVICES=0 ./bench.sh run --suite regression --mode all \
+  --operator deepseek_v4_fp8_gemm_nt --candidate 'pytorch_dequant__*' \
+  --tag representative
+```
+
+The migrated contract, scale layouts, tolerance rationale, legacy adapter map,
+and timer-parity procedure are documented in the
+[FP8 GEMM migration note](docs/deepseek-v4-fp8-gemm-migration.md).
+The existing DeepGEMM kernel is the optimized reference/baseline; the formal
+candidate is an independent PyTorch dequantize-and-matmul implementation.
+The microsecond-scale baseline uses 20 calls per captured graph sample to
+amortize event noise; import, first-call/JIT and graph-build costs remain
+separate artifact fields.
 
 新的 benchmark engine 正在与现有 DeepSeek V4 和 GLM-5 入口并行建设。
 当前 engine 提供可安装的 `benchmark_engine` 包、静态 Registry、确定性 dry-run
