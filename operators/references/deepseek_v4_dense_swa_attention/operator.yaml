@@ -1,0 +1,24 @@
+schema_version: 1
+operator_id: deepseek_v4_dense_swa_attention
+contract_version: 1
+description: SGL Kernel FlashMLA DeepSeek V4 dense sliding-window decode attention
+reference_entrypoint: implementation:operator
+spec_entrypoint: spec:SPEC
+device_types: [cuda]
+tags: [deepseek_v4, attention, dense, swa, decode]
+correctness:
+  default_comparator: floating
+  rtol: 0.03
+  atol: 0.1
+  determinism_repeats: 1
+performance:
+  timer: auto
+  graph_mode: auto
+  warmup: 2
+  samples: 10
+  inner_iterations: 20
+  timeout_s: 1800
+  regression_threshold_pct: 5.0
+  max_cv: 0.15
+  gpu_lock_timeout_s: 600
+cost_model: spec:cost_model
