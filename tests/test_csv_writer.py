@@ -149,6 +149,10 @@ class AtomicCsvTableTests(unittest.TestCase):
         sample = {
             "result_id": result["result_id"],
             "implementation_role": "reference",
+            "reference_dtype": '{"output":"float32"}',
+            "candidate_dtype": '{"output":"float32"}',
+            "reference_shape": '{"output":[4]}',
+            "candidate_shape": '{"output":[4]}',
             "sample_index": 0,
             "inner_iterations": 1,
             "elapsed_ms": 1.0,

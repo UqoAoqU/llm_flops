@@ -66,9 +66,10 @@ manifest value, engine default. Relevant CLI options include `--timer`,
 ## Raw data and statistics
 
 After both roles complete independent first-call, warmup, and graph capture,
-steady samples follow fixed `R-C-C-R` order. `performance_samples.csv` schema v2 stores each reference/candidate sample
+steady samples follow fixed `R-C-C-R` order. `performance_samples.csv` schema v3 stores each reference/candidate sample
 separately, including `elapsed_ms`, `per_call_ms`, `inner_iterations`, timer
-provenance, and a global order index. `results.csv` schema v3 stores the aggregate
+provenance, a global order index, and compact output-path maps for both
+implementations' dtype and shape. `results.csv` schema v3 stores the aggregate
 mean, median, min, max, p50, p90, p95, p99, population standard deviation, and
 coefficient of variation (CV) for both roles. Percentiles use linear Type-7
 interpolation.

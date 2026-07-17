@@ -87,6 +87,18 @@ class PerformanceCliE2ETests(unittest.TestCase):
             )
             self.assertEqual({row["inner_iterations"] for row in samples}, {"2"})
             self.assertEqual({row["effective_timer"] for row in samples}, {"wall_clock"})
+            for sample in samples:
+                reference_dtypes = json.loads(sample["reference_dtype"])
+                candidate_dtypes = json.loads(sample["candidate_dtype"])
+                reference_shapes = json.loads(sample["reference_shape"])
+                candidate_shapes = json.loads(sample["candidate_shape"])
+                self.assertEqual(reference_dtypes, candidate_dtypes)
+                self.assertEqual(reference_shapes, candidate_shapes)
+                self.assertTrue(reference_dtypes)
+                self.assertEqual(set(reference_dtypes.values()), {"float64"})
+                self.assertEqual(
+                    set(reference_dtypes), set(reference_shapes)
+                )
             events = [
                 json.loads(line)["event"]
                 for line in (evaluation / "logs" / "worker.jsonl")

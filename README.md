@@ -41,7 +41,8 @@ To run the included CPU performance example with the Phase 9 defaults
 ```
 
 The mirrored evaluation directory contains `results.csv` schema v3 and
-`performance_samples.csv` schema v2. Summary rows include requested/effective
+`performance_samples.csv` schema v3. Raw samples include deterministic
+output-path maps for reference/candidate dtype and shape. Summary rows include requested/effective
 timer, fallback reason, stage times, reference/candidate statistics, stability,
 and optional theoretical cost rates. See the
 [performance guide](docs/performance.md) for the field semantics and Phase 9

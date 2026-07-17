@@ -275,6 +275,10 @@ PERFORMANCE_SAMPLE_FIELDNAMES = (
     "schema_version",
     "result_id",
     "implementation_role",
+    "reference_dtype",
+    "candidate_dtype",
+    "reference_shape",
+    "candidate_shape",
     "sample_index",
     "inner_iterations",
     "elapsed_ms",
@@ -534,9 +538,21 @@ CORRECTNESS_OUTPUTS_SCHEMA = CsvSchema(
     ("result_id", "output_path"),
 )
 
-_PERFORMANCE_SAMPLE_V1_FIELDNAMES = tuple(
+_PERFORMANCE_SAMPLE_V2_FIELDNAMES = tuple(
     name
     for name in PERFORMANCE_SAMPLE_FIELDNAMES
+    if name
+    not in {
+        "reference_dtype",
+        "candidate_dtype",
+        "reference_shape",
+        "candidate_shape",
+    }
+)
+
+_PERFORMANCE_SAMPLE_V1_FIELDNAMES = tuple(
+    name
+    for name in _PERFORMANCE_SAMPLE_V2_FIELDNAMES
     if name not in {"requested_timer", "effective_timer", "fallback_reason"}
 )
 
@@ -584,20 +600,37 @@ PERFORMANCE_SAMPLES_SCHEMA_V1 = CsvSchema(
 )
 
 
-def _migrate_performance_samples_v1(
+PERFORMANCE_SAMPLES_SCHEMA_V2 = CsvSchema(
+    "performance_samples.csv",
+    _performance_sample_columns(_PERFORMANCE_SAMPLE_V2_FIELDNAMES),
+    ("result_id", "implementation_role", "sample_index"),
+    version=2,
+)
+
+
+def _migrate_performance_samples(
     row: Mapping[str, object], version: int
 ) -> Mapping[str, object]:
-    if version != 1:
+    if version not in {1, 2}:
         raise CsvContractError(
             f"unsupported performance_samples.csv migration from v{version}"
         )
     migrated: dict[str, object] = dict(row)
+    migrated["schema_version"] = 3
+    if version == 1:
+        migrated.update(
+            {
+                "requested_timer": "legacy_unknown",
+                "effective_timer": "legacy_unknown",
+                "fallback_reason": "not_recorded_in_schema_v1",
+            }
+        )
     migrated.update(
         {
-            "schema_version": 2,
-            "requested_timer": "legacy_unknown",
-            "effective_timer": "legacy_unknown",
-            "fallback_reason": "not_recorded_in_schema_v1",
+            "reference_dtype": None,
+            "candidate_dtype": None,
+            "reference_shape": None,
+            "candidate_shape": None,
         }
     )
     return migrated
@@ -607,9 +640,12 @@ PERFORMANCE_SAMPLES_SCHEMA = CsvSchema(
     "performance_samples.csv",
     _performance_sample_columns(PERFORMANCE_SAMPLE_FIELDNAMES),
     ("result_id", "implementation_role", "sample_index"),
-    version=2,
-    compatible_previous=(PERFORMANCE_SAMPLES_SCHEMA_V1,),
-    migrate_previous=_migrate_performance_samples_v1,
+    version=3,
+    compatible_previous=(
+        PERFORMANCE_SAMPLES_SCHEMA_V1,
+        PERFORMANCE_SAMPLES_SCHEMA_V2,
+    ),
+    migrate_previous=_migrate_performance_samples,
 )
 
 
@@ -906,6 +942,7 @@ __all__ = [
     "CsvSchema",
     "PERFORMANCE_SAMPLES_SCHEMA",
     "PERFORMANCE_SAMPLES_SCHEMA_V1",
+    "PERFORMANCE_SAMPLES_SCHEMA_V2",
     "PERFORMANCE_SAMPLE_FIELDNAMES",
     "RESULTS_FIELDNAMES",
     "RESULTS_SCHEMA",

@@ -498,6 +498,37 @@ def _result_error_fields(
     )
 
 
+def _performance_sample_contract_fields(
+    output_rows: Sequence[Mapping[str, object]],
+) -> dict[str, str]:
+    """Encode every normalized output contract without multiplying samples.
+
+    A performance sample covers the whole operator invocation rather than one
+    output leaf.  The four CSV columns therefore contain compact JSON objects
+    keyed by normalized ``output_path``.  This remains unambiguous for
+    operators that return tuples, mappings, or other nested structures.
+    """
+
+    encoded: dict[str, str] = {}
+    for field in (
+        "reference_dtype",
+        "candidate_dtype",
+        "reference_shape",
+        "candidate_shape",
+    ):
+        values: dict[str, object] = {}
+        for row in output_rows:
+            output_path = str(row["output_path"])
+            value = row[field]
+            if field.endswith("_shape"):
+                value = json.loads(str(value))
+            values[output_path] = value
+        encoded[field] = json.dumps(
+            values, sort_keys=True, separators=(",", ":")
+        )
+    return encoded
+
+
 def _append_result(
     job: EvaluationJob,
     snapshot: RegistrySnapshot,
@@ -561,6 +592,7 @@ def _append_result(
             }
         )
     failed_output_count = sum(not bool(output["passed"]) for output in output_rows)
+    sample_contract_fields = _performance_sample_contract_fields(output_rows)
     if correctness is not CorrectnessStatus.PASSED and not failed_output_count:
         failed_output_count = 1
     # The trusted correctness gate dominates every worker-provided performance
@@ -633,6 +665,7 @@ def _append_result(
                     {
                         "result_id": job.result_id,
                         "implementation_role": role,
+                        **sample_contract_fields,
                         "sample_index": sample_index,
                         "inner_iterations": raw_sample.get("inner_iterations"),
                         "elapsed_ms": raw_sample.get("elapsed_ms"),

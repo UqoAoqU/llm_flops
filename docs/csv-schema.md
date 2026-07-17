@@ -4,10 +4,10 @@ The Python authority is
 `benchmark_engine.reporting.csv_writer`; this document defines the persisted
 contract for readers and future evaluators.
 
-Phase 9 uses schema version **3** for `results.csv` and schema **2** for
+The current format uses schema version **3** for both `results.csv` and
 `performance_samples.csv`; `correctness_outputs.csv`, run indexes, and history
-remain schema version **1**. Exact valid v1/v2 results headers and a v1 sample
-header are read and atomically upgraded on first append. Unknown headers are
+remain schema version **1**. Exact valid v1/v2 results and performance-sample
+headers are read and atomically upgraded on first append. Unknown headers are
 rejected; missing provenance is explicitly marked and legacy rows are never ranked.
 
 All tables are UTF-8 comma-separated RFC 4180 files with a header and CRLF
@@ -100,14 +100,24 @@ samples remain separate so statistics can be recalculated later.
 
 | Fields (stable order) | Type | Null rule |
 |---|---|---|
-| `schema_version` | integer | required, always `2` |
+| `schema_version` | integer | required, always `3` |
 | `result_id` | string | required |
 | `implementation_role` | string enum (`reference` or `candidate`) | required |
+| `reference_dtype`, `candidate_dtype` | compact JSON object | normalized output path to dtype; required for new rows, empty only in migrated v1/v2 rows |
+| `reference_shape`, `candidate_shape` | compact JSON object | normalized output path to shape array; required for new rows, empty only in migrated v1/v2 rows |
 | `sample_index`, `inner_iterations`, `order_index` | integer | required |
 | `elapsed_ms`, `per_call_ms` | number | required |
 | `requested_timer`, `effective_timer` | string | required |
 | `fallback_reason` | string | empty unless auto selection fell back |
 | `gpu_clock_mhz`, `memory_clock_mhz`, `temperature_c`, `power_w` | number | empty when telemetry is unavailable; never fake zero |
+
+Each timing sample covers one complete operator invocation, so the four
+contract columns are JSON objects rather than one row per output leaf. Keys are
+the same normalized `output_path` values used by `correctness_outputs.csv` and
+are emitted in sorted order. For example,
+`{"output":{"logits":"float32"}}` is not used; the dtype representation is
+the flat map `{"output.logits":"float32"}`, while the corresponding shape map
+may be `{"output.logits":[2,128]}`.
 
 ## Index CSVs
 
