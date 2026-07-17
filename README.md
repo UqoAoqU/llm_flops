@@ -78,6 +78,12 @@ context 65536. Phase, quant profile, model input, context, and adapter identity
 are explicit case metadata. Missing or unavailable legacy adapters are listed
 and never counted as zero in the measured partial total.
 
+The FP8 profile includes the FlashInfer TRTLLM routed-MoE reference at 384
+global/16 local experts, top-k 6, hidden 7168 and intermediate 3072. Its
+byte-identical control candidate exercises route packing, long first-call JIT,
+CUDA Graph measurement and 61-layer projection; MXFP4 remains explicitly
+outside this FP8/MXFP8 contract.
+
 ## 评测一个 candidate
 
 Candidate 放在：

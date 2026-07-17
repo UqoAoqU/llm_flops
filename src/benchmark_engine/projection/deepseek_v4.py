@@ -35,7 +35,7 @@ _PREFILL = (
     _m("dense_swa_attention", "prefill", "Dense SWA Attention", "sgl-kernel FlashMLA SWA-only", 1, None, "dense_prefill_attention"),
     _m("wo_a_grouped_projection", "prefill", "WO_A Grouped Projection", "cuBLAS grouped BF16 GEMM", 61, None, "grouped_bf16", (16, 4096, 1024)),
     _m("wo_b_projection", "prefill", "WO_B Projection", "DeepGEMM fp8_gemm_nt", 61, "deepseek_v4_fp8_gemm_nt", "fp8", (16384, 7168)),
-    _m("routed_expert_fused_moe", "prefill", "Routed Expert Fused MoE", "FlashInfer TRTLLM FP8 weight + MXFP8 activation", 61, None, "moe_fp8_mxfp8", (16, 7168, 3072)),
+    _m("routed_expert_fused_moe", "prefill", "Routed Expert Fused MoE", "FlashInfer TRTLLM FP8 weight + MXFP8 activation", 61, "deepseek_v4_trtllm_fp8_mxfp8_moe", "moe_fp8_mxfp8", (16, 7168, 3072)),
     _m("lm_head", "prefill", "LM Head", "DeepGEMM FP8 full vocab", 1, "deepseek_v4_fp8_gemm_nt", "fp8", (7168, 129280)),
 )
 
@@ -52,7 +52,7 @@ _DECODE = (
     _m("dense_swa_attention", "decode", "Dense SWA Attention", "sgl-kernel FlashMLA SWA-only", 1, "deepseek_v4_dense_swa_attention", "dense_decode_attention"),
     _m("wo_a_grouped_projection", "decode", "WO_A Grouped Projection", "cuBLAS grouped BF16 GEMM", 61, None, "grouped_bf16", (16, 4096, 1024)),
     _m("wo_b_projection", "decode", "WO_B Projection", "DeepGEMM fp8_gemm_nt", 61, "deepseek_v4_fp8_gemm_nt", "fp8", (16384, 7168)),
-    _m("routed_expert_fused_moe", "decode", "Routed Expert Fused MoE", "FlashInfer TRTLLM FP8 weight + MXFP8 activation", 61, None, "moe_fp8_mxfp8", (16, 7168, 3072)),
+    _m("routed_expert_fused_moe", "decode", "Routed Expert Fused MoE", "FlashInfer TRTLLM FP8 weight + MXFP8 activation", 61, "deepseek_v4_trtllm_fp8_mxfp8_moe", "moe_fp8_mxfp8", (16, 7168, 3072)),
     _m("lm_head", "decode", "LM Head", "DeepGEMM FP8 full vocab", 1, "deepseek_v4_fp8_gemm_nt", "fp8", (7168, 129280)),
 )
 

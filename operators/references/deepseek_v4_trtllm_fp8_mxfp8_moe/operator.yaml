@@ -1,0 +1,25 @@
+schema_version: 1
+operator_id: deepseek_v4_trtllm_fp8_mxfp8_moe
+contract_version: 1
+description: DeepSeek V4 FlashInfer TRTLLM routed MoE with FP8 weights and MXFP8 activations
+reference_entrypoint: implementation:operator
+spec_entrypoint: spec:SPEC
+device_types: [cuda]
+tags: [deepseek_v4, moe, routed_expert, flashinfer, fp8, mxfp8]
+correctness:
+  default_comparator: floating
+  rtol: 0.03
+  atol: 0.2
+  equal_nan: false
+  determinism_repeats: 1
+performance:
+  timer: auto
+  graph_mode: auto
+  warmup: 2
+  samples: 10
+  inner_iterations: 1
+  timeout_s: 1800
+  regression_threshold_pct: 5.0
+  max_cv: 0.15
+  gpu_lock_timeout_s: 600
+cost_model: spec:cost_model

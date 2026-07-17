@@ -111,3 +111,18 @@ TheoreticalCost(flops=..., estimated_bytes=..., throughput_units=...)
 
 可复制示例位于 [docs/examples/minimal-operator](examples/minimal-operator/)。正确性细节见
 [Correctness contract](correctness.md)。
+
+## Routed MoE contract example
+
+A routed-MoE spec must state both logical tensor geometry and backend layout:
+global/local expert counts and offset, top-k, route-ID range, normalized route
+weights, logical `w13[E,2I,H]`/`w2[E,H,I]`, scale block/dtype, activation
+quantization and output dtype. Duplicate expert IDs and rows with no local
+expert are valid semantic boundaries unless the operator explicitly says
+otherwise. Routing tensors and representative weight/scale slices belong in
+`observed_state` so an in-place candidate mutation is a correctness failure.
+
+Large representative cases may persist a deterministic bounded sample rather
+than a full golden tensor, but small CPU tests must retain an independent
+routing/MLP oracle. Profile names are contracts: MXFP4 and FP8-weight/MXFP8-
+activation kernels must not share one ambiguous runtime operator name.

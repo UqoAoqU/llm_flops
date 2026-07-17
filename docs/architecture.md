@@ -28,6 +28,14 @@ changes shapes, correctness, timers, JIT/build stages, or raw samples. Each
 evaluation owns a recoverable `model_projection.csv`; run-level totals join all
 mirrored evaluations through `run_index.csv`.
 
+The DeepSeek routed-MoE mapping is a normal operator mapping, not a projection
+special case. `deepseek_v4_trtllm_fp8_mxfp8_moe` owns the global/local expert,
+top-k, shuffled FP8 weight and MXFP8 activation contract. Its per-call median
+is multiplied by 61 only after correctness and the ordinary performance gate
+succeed. Missing symbols, unsupported capability, import/build errors,
+timeouts and OOM remain worker outcomes and therefore cannot enter a model
+total as zero.
+
 ## 核心边界
 
 - **Registry** 只解析 manifest、检查 entrypoint 文件和计算 source hash，不导入

@@ -1,0 +1,7 @@
+schema_version: 1
+operator_id: deepseek_v4_trtllm_fp8_mxfp8_moe
+candidate_id: reference_control__20260717T150000Z__d4f14e00
+entrypoint: implementation:operator
+framework: flashinfer-trtllm
+metadata:
+  purpose: byte-identical-reference-control

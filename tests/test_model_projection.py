@@ -39,8 +39,8 @@ class DeepSeekV4ProjectionTests(unittest.TestCase):
 
     def test_prefill_and_decode_suites_expand_real_phase_shapes(self):
         expected = {
-            "deepseek_v4_prefill": ((1024, 2048, 4096), 33, "prefill"),
-            "deepseek_v4_decode": ((16, 32), 22, "decode"),
+            "deepseek_v4_prefill": ((1024, 2048, 4096), 36, "prefill"),
+            "deepseek_v4_decode": ((16, 32), 24, "decode"),
         }
         for suite, (inputs, job_count, phase) in expected.items():
             with self.subTest(suite=suite):
@@ -67,7 +67,7 @@ class DeepSeekV4ProjectionTests(unittest.TestCase):
         self.assertEqual(fused.instances * 0.125, 7.625)
         missing = {item.adapter_id for item in mappings if item.operator_id is None}
         self.assertEqual(missing, {"c4_indexer_head_weight", "dense_swa_attention",
-                                   "wo_a_grouped_projection", "routed_expert_fused_moe"})
+                                   "wo_a_grouped_projection"})
         self.assertEqual(DEEPSEEK_V4_PROJECTION.mappings("prefill", "mxfp4"), ())
 
     def test_run_summary_aggregates_projection_and_never_counts_missing_as_zero(self):

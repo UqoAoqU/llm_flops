@@ -78,6 +78,15 @@ throughput units 与 candidate median latency 组合，生成 `tflops`、
 legacy adapter 到稳定 operator/case 的映射。投影仅使用已持久化 per-call median
 乘以 instances；跨 operator 的模型 partial total 由 `run_index.csv` 在 run 级聚合。
 
+FlashInfer routed MoE follows the same boundaries. The trusted spec constructs
+and validates global routing, aligns logical FP8 weights to SGLang's shuffled
+TRTLLM layout, packs top-k metadata, and clones every tensor for each role.
+The implementation module resolves backend symbols during worker import; the
+timed callable contains only MXFP8 activation quantization and
+`trtllm_fp8_block_scale_routed_moe`. Thus import/build, first call, warmup,
+graph capture and steady-state remain independently observable. The MXFP4
+legacy path is not dispatched through the FP8/MXFP8 operator name.
+
 所有 artifact 写入遵守三个不变量：
 
 - 同一主键和完全相同行可幂等重放；同键不同内容必须报错；
