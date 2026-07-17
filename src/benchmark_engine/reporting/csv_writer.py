@@ -61,6 +61,8 @@ class CsvSchema:
     columns: tuple[CsvColumn, ...]
     primary_key: tuple[str, ...]
     version: int = CSV_SCHEMA_VERSION
+    compatible_previous: tuple["CsvSchema", ...] = ()
+    migrate_previous: Callable[[Mapping[str, object], int], Mapping[str, object]] | None = None
 
     def __post_init__(self) -> None:
         names = self.fieldnames
@@ -70,6 +72,12 @@ class CsvSchema:
             raise ValueError("CSV column names must be unique")
         if not self.primary_key or not set(self.primary_key).issubset(names):
             raise ValueError("CSV primary key must name schema columns")
+        if self.compatible_previous and self.migrate_previous is None:
+            raise ValueError("compatible_previous requires migrate_previous")
+        if any(previous.filename != self.filename for previous in self.compatible_previous):
+            raise ValueError("compatible schemas must use the same filename")
+        if any(previous.version >= self.version for previous in self.compatible_previous):
+            raise ValueError("compatible schemas must have an older version")
 
     @property
     def fieldnames(self) -> tuple[str, ...]:
@@ -150,20 +158,49 @@ RESULTS_FIELDNAMES = (
     "mismatch_count",
     "mismatch_rate",
     "timer",
+    "requested_timer",
+    "effective_timer",
+    "timer_fallback_reason",
     "import_ms",
     "build_ms",
     "first_call_ms",
     "warmup_ms",
     "graph_capture_ms",
+    "steady_state_ms",
+    "reference_first_call_ms",
+    "reference_warmup_ms",
+    "reference_graph_capture_ms",
+    "reference_steady_state_ms",
+    "reference_mean_ms",
     "reference_median_ms",
+    "reference_min_ms",
+    "reference_max_ms",
+    "reference_stddev_ms",
+    "reference_cv",
+    "reference_p50_ms",
+    "reference_p90_ms",
+    "reference_p95_ms",
+    "reference_p99_ms",
+    "reference_unstable",
+    "candidate_mean_ms",
     "candidate_median_ms",
+    "candidate_min_ms",
+    "candidate_max_ms",
+    "candidate_p50_ms",
+    "candidate_p90_ms",
     "candidate_p95_ms",
+    "candidate_p99_ms",
     "candidate_stddev_ms",
     "candidate_cv",
+    "candidate_unstable",
+    "instability_reason",
     "speedup",
     "slowdown_pct",
     "tflops",
     "effective_bandwidth_gbps",
+    "flops",
+    "estimated_bytes",
+    "arithmetic_intensity",
     "throughput",
     "peak_memory_bytes",
     "workspace_bytes",
@@ -210,16 +247,56 @@ PERFORMANCE_SAMPLE_FIELDNAMES = (
     "elapsed_ms",
     "per_call_ms",
     "order_index",
+    "requested_timer",
+    "effective_timer",
+    "fallback_reason",
     "gpu_clock_mhz",
     "memory_clock_mhz",
     "temperature_c",
     "power_w",
 )
 
-RESULTS_SCHEMA = CsvSchema(
-    "results.csv",
-    _columns(
-        RESULTS_FIELDNAMES,
+_RESULTS_V1_FIELDNAMES = tuple(
+    name
+    for name in RESULTS_FIELDNAMES
+    if name
+    not in {
+        "requested_timer",
+        "effective_timer",
+        "timer_fallback_reason",
+        "steady_state_ms",
+        "reference_first_call_ms",
+        "reference_warmup_ms",
+        "reference_graph_capture_ms",
+        "reference_steady_state_ms",
+        "reference_mean_ms",
+        "reference_min_ms",
+        "reference_max_ms",
+        "reference_stddev_ms",
+        "reference_cv",
+        "reference_p50_ms",
+        "reference_p90_ms",
+        "reference_p95_ms",
+        "reference_p99_ms",
+        "reference_unstable",
+        "candidate_mean_ms",
+        "candidate_min_ms",
+        "candidate_max_ms",
+        "candidate_p50_ms",
+        "candidate_p90_ms",
+        "candidate_p99_ms",
+        "candidate_unstable",
+        "instability_reason",
+        "flops",
+        "estimated_bytes",
+        "arithmetic_intensity",
+    }
+)
+
+
+def _results_columns(names: tuple[str, ...]) -> tuple[CsvColumn, ...]:
+    return _columns(
+        names,
         required=frozenset(
             {
                 "schema_version",
@@ -268,19 +345,44 @@ RESULTS_SCHEMA = CsvSchema(
                 "first_call_ms",
                 "warmup_ms",
                 "graph_capture_ms",
+                "steady_state_ms",
+                "reference_first_call_ms",
+                "reference_warmup_ms",
+                "reference_graph_capture_ms",
+                "reference_steady_state_ms",
+                "reference_mean_ms",
                 "reference_median_ms",
+                "reference_min_ms",
+                "reference_max_ms",
+                "reference_stddev_ms",
+                "reference_cv",
+                "reference_p50_ms",
+                "reference_p90_ms",
+                "reference_p95_ms",
+                "reference_p99_ms",
+                "candidate_mean_ms",
                 "candidate_median_ms",
+                "candidate_min_ms",
+                "candidate_max_ms",
+                "candidate_p50_ms",
+                "candidate_p90_ms",
                 "candidate_p95_ms",
+                "candidate_p99_ms",
                 "candidate_stddev_ms",
                 "candidate_cv",
                 "speedup",
                 "slowdown_pct",
                 "tflops",
                 "effective_bandwidth_gbps",
+                "flops",
+                "estimated_bytes",
+                "arithmetic_intensity",
                 "throughput",
             }
         ),
-        booleans=frozenset({"correctness_pass"}),
+        booleans=frozenset(
+            {"correctness_pass", "reference_unstable", "candidate_unstable"}
+        ),
         allowed_values={
             "mode": frozenset({"all", "correctness", "performance"}),
             "status": frozenset(status.value for status in ResultStatus),
@@ -291,8 +393,38 @@ RESULTS_SCHEMA = CsvSchema(
                 status.value for status in PerformanceStatus
             ),
         },
-    ),
+    )
+
+
+RESULTS_SCHEMA_V1 = CsvSchema(
+    "results.csv",
+    _results_columns(_RESULTS_V1_FIELDNAMES),
     ("result_id",),
+    version=1,
+)
+
+
+def _migrate_results_v1(row: Mapping[str, object], version: int) -> Mapping[str, object]:
+    if version != 1:
+        raise CsvContractError(f"unsupported results.csv migration from v{version}")
+    migrated: dict[str, object] = dict(row)
+    migrated["schema_version"] = 2
+    timer = row.get("timer") or ""
+    migrated["requested_timer"] = timer
+    migrated["effective_timer"] = timer
+    migrated["timer_fallback_reason"] = (
+        "not_recorded_in_schema_v1" if timer else ""
+    )
+    return migrated
+
+
+RESULTS_SCHEMA = CsvSchema(
+    "results.csv",
+    _results_columns(RESULTS_FIELDNAMES),
+    ("result_id",),
+    version=2,
+    compatible_previous=(RESULTS_SCHEMA_V1,),
+    migrate_previous=_migrate_results_v1,
 )
 
 CORRECTNESS_OUTPUTS_SCHEMA = CsvSchema(
@@ -339,29 +471,31 @@ CORRECTNESS_OUTPUTS_SCHEMA = CsvSchema(
     ("result_id", "output_path"),
 )
 
-PERFORMANCE_SAMPLES_SCHEMA = CsvSchema(
-    "performance_samples.csv",
-    _columns(
-        PERFORMANCE_SAMPLE_FIELDNAMES,
-        required=frozenset(
-            {
-                "schema_version",
-                "result_id",
-                "implementation_role",
-                "sample_index",
-                "inner_iterations",
-                "elapsed_ms",
-                "per_call_ms",
-                "order_index",
-            }
-        ),
+_PERFORMANCE_SAMPLE_V1_FIELDNAMES = tuple(
+    name
+    for name in PERFORMANCE_SAMPLE_FIELDNAMES
+    if name not in {"requested_timer", "effective_timer", "fallback_reason"}
+)
+
+
+def _performance_sample_columns(names: tuple[str, ...]) -> tuple[CsvColumn, ...]:
+    required = {
+        "schema_version",
+        "result_id",
+        "implementation_role",
+        "sample_index",
+        "inner_iterations",
+        "elapsed_ms",
+        "per_call_ms",
+        "order_index",
+    }
+    if "requested_timer" in names:
+        required.update({"requested_timer", "effective_timer"})
+    return _columns(
+        names,
+        required=frozenset(required),
         integers=frozenset(
-            {
-                "schema_version",
-                "sample_index",
-                "inner_iterations",
-                "order_index",
-            }
+            {"schema_version", "sample_index", "inner_iterations", "order_index"}
         ),
         numbers=frozenset(
             {
@@ -376,8 +510,43 @@ PERFORMANCE_SAMPLES_SCHEMA = CsvSchema(
         allowed_values={
             "implementation_role": frozenset({"reference", "candidate"})
         },
-    ),
+    )
+
+
+PERFORMANCE_SAMPLES_SCHEMA_V1 = CsvSchema(
+    "performance_samples.csv",
+    _performance_sample_columns(_PERFORMANCE_SAMPLE_V1_FIELDNAMES),
     ("result_id", "implementation_role", "sample_index"),
+    version=1,
+)
+
+
+def _migrate_performance_samples_v1(
+    row: Mapping[str, object], version: int
+) -> Mapping[str, object]:
+    if version != 1:
+        raise CsvContractError(
+            f"unsupported performance_samples.csv migration from v{version}"
+        )
+    migrated: dict[str, object] = dict(row)
+    migrated.update(
+        {
+            "schema_version": 2,
+            "requested_timer": "legacy_unknown",
+            "effective_timer": "legacy_unknown",
+            "fallback_reason": "not_recorded_in_schema_v1",
+        }
+    )
+    return migrated
+
+
+PERFORMANCE_SAMPLES_SCHEMA = CsvSchema(
+    "performance_samples.csv",
+    _performance_sample_columns(PERFORMANCE_SAMPLE_FIELDNAMES),
+    ("result_id", "implementation_role", "sample_index"),
+    version=2,
+    compatible_previous=(PERFORMANCE_SAMPLES_SCHEMA_V1,),
+    migrate_previous=_migrate_performance_samples_v1,
 )
 
 
@@ -478,6 +647,27 @@ def _validate_stored_value(column: CsvColumn, value: str, location: str) -> None
         ) from error
 
 
+def _parse_stored_row(
+    schema: CsvSchema, row: Mapping[str, str]
+) -> dict[str, object]:
+    """Convert an already validated stored row to typed migration input."""
+
+    result: dict[str, object] = {}
+    for column in schema.columns:
+        value = row[column.name]
+        if value == "":
+            result[column.name] = None
+        elif column.kind == "integer":
+            result[column.name] = int(value)
+        elif column.kind == "number":
+            result[column.name] = float(value)
+        elif column.kind == "boolean":
+            result[column.name] = value == "true"
+        else:
+            result[column.name] = value
+    return result
+
+
 class AtomicCsvTable:
     """A schema-bound, deduplicating, atomically replaced CSV table."""
 
@@ -507,28 +697,49 @@ class AtomicCsvTable:
             return []
         with self.path.open("r", encoding="utf-8", newline="") as stream:
             reader = csv.DictReader(stream)
+            source_schema = self.schema
             if reader.fieldnames != list(self.schema.fieldnames):
+                source_schema = next(
+                    (
+                        previous
+                        for previous in self.schema.compatible_previous
+                        if reader.fieldnames == list(previous.fieldnames)
+                    ),
+                    None,
+                )
+            if source_schema is None:
                 raise CsvContractError(
                     f"{self.path} has an incompatible header/schema"
                 )
             rows = list(reader)
         seen: set[tuple[str, ...]] = set()
         for number, row in enumerate(rows, start=2):
-            if None in row or set(row) != set(self.schema.fieldnames):
+            if None in row or set(row) != set(source_schema.fieldnames):
                 raise CsvContractError(f"{self.path}:{number} is malformed")
-            if row["schema_version"] != str(self.schema.version):
+            if row["schema_version"] != str(source_schema.version):
                 raise CsvContractError(
                     f"{self.path}:{number} has incompatible schema_version"
                 )
-            for column in self.schema.columns:
+            for column in source_schema.columns:
                 _validate_stored_value(
                     column, row[column.name], f"{self.path}:{number}"
                 )
-            key = self._key(row)
+            key = tuple(row[name] for name in source_schema.primary_key)
             if key in seen:
                 raise CsvContractError(f"{self.path}:{number} duplicates key {key}")
             seen.add(key)
-        return rows
+        if source_schema is self.schema:
+            return rows
+        assert self.schema.migrate_previous is not None
+        migrated = [
+            self.normalise(
+                self.schema.migrate_previous(
+                    _parse_stored_row(source_schema, row), source_schema.version
+                )
+            )
+            for row in rows
+        ]
+        return migrated
 
     def append(self, row: Mapping[str, object]) -> bool:
         """Persist one row; return ``False`` for an identical existing row."""
@@ -631,8 +842,10 @@ __all__ = [
     "CsvContractError",
     "CsvSchema",
     "PERFORMANCE_SAMPLES_SCHEMA",
+    "PERFORMANCE_SAMPLES_SCHEMA_V1",
     "PERFORMANCE_SAMPLE_FIELDNAMES",
     "RESULTS_FIELDNAMES",
     "RESULTS_SCHEMA",
+    "RESULTS_SCHEMA_V1",
     "atomic_write_text",
 ]

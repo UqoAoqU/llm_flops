@@ -18,6 +18,11 @@ from pathlib import Path
 from benchmark_engine.registry.validation import validate_entrypoint
 from benchmark_engine.reporting.csv_writer import atomic_write_text
 from benchmark_engine.correctness import CorrectnessEvaluator
+from benchmark_engine.performance import (
+    PerformanceConfig,
+    PerformanceEvaluator,
+    TimerUnsupportedError,
+)
 from benchmark_engine.models import CaseSpec
 
 from .event_log import EventEmitter, EventLog
@@ -100,7 +105,7 @@ def _classify(error: BaseException, extra_text: str = "") -> WorkerOutcome:
     text = f"{type(error).__name__}: {error}\n{extra_text}".lower()
     if isinstance(error, (MemoryError,)) or "out of memory" in text or "cuda oom" in text:
         return WorkerOutcome.OOM
-    if isinstance(error, NotImplementedError) or "unsupported" in text:
+    if isinstance(error, (NotImplementedError, TimerUnsupportedError)) or "unsupported" in text:
         return WorkerOutcome.UNSUPPORTED
     if isinstance(error, KeyboardInterrupt):
         return WorkerOutcome.INTERRUPTED
@@ -355,6 +360,7 @@ def execute(
                     WorkerStage.CORRECTNESS,
                     "started",
                 )
+                formal_spec = False
                 try:
                     formal_spec = _validate_operator_spec(runtime_spec, request)
                     if not formal_spec:
@@ -376,6 +382,7 @@ def execute(
                             case=request.case,
                             operator_id=request.identity.operator_id,
                             candidate_id=request.identity.candidate_id,
+                            cuda_devices=request.cuda_devices,
                         )
                         result_payload = result.to_dict()
                         if result.diagnostic is not None:
@@ -418,11 +425,130 @@ def execute(
                             message=None if result_payload is None else str(result_payload["status"]),
                         )
                 stage_elapsed[WorkerStage.CORRECTNESS.value] = time.monotonic() - stage_started
-                _skip_from(
-                    emitter,
-                    3,
-                    "performance_not_implemented",
-                )
+                if not formal_spec:
+                    _skip_from(emitter, 3, "Phase-5 import/build-only fixture")
+                elif result_payload is None or result_payload.get("status") != "pass":
+                    assert result_payload is not None
+                    result_payload["performance"] = {
+                        "status": "skipped",
+                        "reason": "correctness_gate_failed",
+                    }
+                    _skip_from(emitter, 3, "correctness_gate_failed")
+                elif request.mode == "correctness":
+                    result_payload["performance"] = {
+                        "status": "skipped",
+                        "reason": "correctness_only_mode",
+                    }
+                    _skip_from(emitter, 3, "correctness_only_mode")
+                else:
+                    stage_started = time.monotonic()
+                    emitter.emit(
+                        EventName.WARMUP_STARTED, WorkerStage.WARMUP, "started"
+                    )
+                    evaluator = PerformanceEvaluator()
+                    try:
+                        config = PerformanceConfig(
+                            requested_timer=request.resolved_config.performance_timer,
+                            warmup=request.resolved_config.performance_warmup,
+                            samples=request.resolved_config.performance_samples,
+                            inner_iterations=request.resolved_config.performance_inner_iterations,
+                        )
+                        prepared = evaluator.prepare(
+                            spec=runtime_spec,
+                            reference=reference_callable,
+                            candidate=candidate_callable,
+                            case=request.case,
+                            config=config,
+                            cuda_devices=request.cuda_devices,
+                        )
+                    except BaseException as error:
+                        stage_elapsed[WorkerStage.WARMUP.value] = (
+                            time.monotonic() - stage_started
+                        )
+                        outcome = _classify(error)
+                        failed_stage = WorkerStage.WARMUP
+                        error_type = type(error).__name__
+                        error_message = _bounded_message(error)
+                        path = _diagnostic_path(
+                            artifact_root, request.result_id, failed_stage
+                        )
+                        atomic_write_text(
+                            path, traceback.format_exc()[-1024 * 1024 :]
+                        )
+                        diagnostic = path.relative_to(artifact_root).as_posix()
+                        result_payload["performance"] = {
+                            "status": outcome.value,
+                            "reason": error_message,
+                        }
+                        emitter.emit(
+                            EventName.WARMUP_FINISHED,
+                            WorkerStage.WARMUP,
+                            outcome.value,
+                            message=error_message,
+                        )
+                        emitter.emit(
+                            EventName.SAMPLING_STARTED,
+                            WorkerStage.SAMPLING,
+                            "started",
+                        )
+                        emitter.emit(
+                            EventName.SAMPLING_FINISHED,
+                            WorkerStage.SAMPLING,
+                            "skipped",
+                            message="skipped after performance preparation failure",
+                        )
+                    else:
+                        stage_elapsed[WorkerStage.WARMUP.value] = (
+                            time.monotonic() - stage_started
+                        )
+                        emitter.emit(
+                            EventName.WARMUP_FINISHED,
+                            WorkerStage.WARMUP,
+                            "success",
+                        )
+                        emitter.emit(
+                            EventName.SAMPLING_STARTED,
+                            WorkerStage.SAMPLING,
+                            "started",
+                        )
+                        stage_started = time.monotonic()
+                        try:
+                            performance = evaluator.sample(prepared)
+                        except BaseException as error:
+                            stage_elapsed[WorkerStage.SAMPLING.value] = (
+                                time.monotonic() - stage_started
+                            )
+                            outcome = _classify(error)
+                            failed_stage = WorkerStage.SAMPLING
+                            error_type = type(error).__name__
+                            error_message = _bounded_message(error)
+                            path = _diagnostic_path(
+                                artifact_root, request.result_id, failed_stage
+                            )
+                            atomic_write_text(
+                                path, traceback.format_exc()[-1024 * 1024 :]
+                            )
+                            diagnostic = path.relative_to(artifact_root).as_posix()
+                            result_payload["performance"] = {
+                                "status": outcome.value,
+                                "reason": error_message,
+                            }
+                            emitter.emit(
+                                EventName.SAMPLING_FINISHED,
+                                WorkerStage.SAMPLING,
+                                outcome.value,
+                                message=error_message,
+                            )
+                        else:
+                            stage_elapsed[WorkerStage.SAMPLING.value] = (
+                                time.monotonic() - stage_started
+                            )
+                            result_payload["performance"] = performance.to_dict()
+                            emitter.emit(
+                                EventName.SAMPLING_FINISHED,
+                                WorkerStage.SAMPLING,
+                                "success",
+                            )
     finally:
         stop.set()
         heartbeat.join(timeout=max(interval * 2, 0.2))

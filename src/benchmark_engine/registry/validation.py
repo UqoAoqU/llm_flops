@@ -263,13 +263,29 @@ def _performance(value: object, path: Path) -> PerformanceManifest:
         data, path=path, field="performance", allowed=_PERFORMANCE_FIELDS
     )
     defaults = PerformanceManifest()
-    return PerformanceManifest(
-        timer=_string(data.get("timer", defaults.timer), path, "performance.timer"),
-        graph_mode=_string(
+    timer = _string(data.get("timer", defaults.timer), path, "performance.timer")
+    if timer not in {"auto", "cuda_event", "cuda_graph", "wall_clock"}:
+        _fail(
+            "value",
+            path,
+            "performance.timer",
+            "must be auto, cuda_event, cuda_graph, or wall_clock",
+        )
+    graph_mode = _string(
             data.get("graph_mode", defaults.graph_mode),
             path,
             "performance.graph_mode",
-        ),
+        )
+    if graph_mode not in {"auto", "enabled", "disabled"}:
+        _fail(
+            "value",
+            path,
+            "performance.graph_mode",
+            "must be auto, enabled, or disabled",
+        )
+    return PerformanceManifest(
+        timer=timer,
+        graph_mode=graph_mode,
         warmup=_integer(
             data.get("warmup", defaults.warmup),
             path,

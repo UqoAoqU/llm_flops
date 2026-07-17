@@ -25,6 +25,7 @@ from .reporting import (
 from .reporting.csv_writer import (
     AtomicCsvTable,
     CORRECTNESS_OUTPUTS_SCHEMA,
+    PERFORMANCE_SAMPLES_SCHEMA,
     RESULTS_SCHEMA,
     atomic_write_text,
 )
@@ -76,6 +77,10 @@ def build_dry_run_plan(
     evaluation_id: str | None = None,
     resume: bool = False,
     plan_builder: PlanBuilder | None = None,
+    performance_timer: str | None = None,
+    performance_warmup: int | None = None,
+    performance_samples: int | None = None,
+    performance_inner_iterations: int | None = None,
 ):
     """Build an import-free-of-candidates, artifact-free plan."""
 
@@ -94,15 +99,20 @@ def build_dry_run_plan(
         seeds=seeds,
         evaluation_id=evaluation_id,
         resume=resume,
+        performance_timer=performance_timer,
+        performance_warmup=performance_warmup,
+        performance_samples=performance_samples,
+        performance_inner_iterations=performance_inner_iterations,
     )
 
 
-def _runtime_environment(root: Path) -> tuple[dict[str, object], str]:
+def _runtime_environment(
+    root: Path, *, include_cuda: bool = False
+) -> tuple[dict[str, object], str]:
     lock = load_lock(root / "requirements" / "benchmark-lock.json")
-    # Phase 7 executes correctness only.  CPU operators must not initialise
-    # CUDA merely to construct an identity; CUDA collection begins with the
-    # performance timer phase.
-    observed = collect_environment(lock, include_cuda=False)
+    # Correctness-only CPU runs avoid CUDA initialization.  Performance/all
+    # identities include the CUDA runtime and device metadata they measure.
+    observed = collect_environment(lock, include_cuda=include_cuda)
     return observed, environment_fingerprint(observed)
 
 
@@ -115,11 +125,18 @@ def build_execution_plan(
     mode: str | None = None,
     seeds: tuple[int, ...] = (),
     evaluation_id: str | None = None,
+    performance_timer: str | None = None,
+    performance_warmup: int | None = None,
+    performance_samples: int | None = None,
+    performance_inner_iterations: int | None = None,
 ) -> tuple[EvaluationPlan, RegistrySnapshot, Mapping[str, object]]:
     root = Path(repository_root).resolve()
     suite = _suite(root, suite_id)
     snapshot = FilesystemRegistry(root).discover()
-    environment, fingerprint = _runtime_environment(root)
+    resolved_mode = mode or suite.mode
+    environment, fingerprint = _runtime_environment(
+        root, include_cuda=resolved_mode in {"all", "performance"}
+    )
     plan = PlanBuilder().build(
         snapshot,
         suite,
@@ -129,6 +146,10 @@ def build_execution_plan(
         mode=mode,
         seeds=seeds,
         evaluation_id=evaluation_id,
+        performance_timer=performance_timer,
+        performance_warmup=performance_warmup,
+        performance_samples=performance_samples,
+        performance_inner_iterations=performance_inner_iterations,
     )
     return replace(plan, fingerprint_kind="runtime"), snapshot, environment
 
@@ -170,7 +191,6 @@ def build_resume_plan(
 ) -> tuple[EvaluationPlan, RegistrySnapshot, Mapping[str, object]]:
     root = Path(repository_root).resolve()
     snapshot = FilesystemRegistry(root).discover()
-    environment, fingerprint = _runtime_environment(root)
     states = ResumeReader(output_root).for_run(run_id)
     jobs: list[EvaluationJob] = []
     suite_ids = {state.manifest.suite_id for state in states}
@@ -178,6 +198,9 @@ def build_resume_plan(
     if len(suite_ids) != 1 or len(modes) != 1:
         raise ResumeMismatchError("run contains incompatible suite or mode values")
     suite_id = next(iter(suite_ids))
+    environment, fingerprint = _runtime_environment(
+        root, include_cuda=next(iter(modes)) in {"all", "performance"}
+    )
     suite = _suite(root, suite_id)
     for state in states:
         manifest = state.manifest
@@ -293,6 +316,80 @@ def _result_status(status: CorrectnessStatus) -> ResultStatus:
     }[status]
 
 
+def _performance_status(raw: str) -> PerformanceStatus:
+    try:
+        return {
+            "pass": PerformanceStatus.PASSED,
+            "unstable": PerformanceStatus.UNSTABLE,
+            "skipped": PerformanceStatus.SKIPPED,
+            "unsupported": PerformanceStatus.UNSUPPORTED,
+            "error": PerformanceStatus.ERROR,
+            "timeout": PerformanceStatus.TIMEOUT,
+            "oom": PerformanceStatus.OOM,
+            "crashed": PerformanceStatus.CRASHED,
+        }[raw]
+    except KeyError as error:
+        raise ValueError(f"unknown performance status {raw!r}") from error
+
+
+def _overall_status(
+    correctness: CorrectnessStatus, performance: PerformanceStatus
+) -> ResultStatus:
+    if correctness is not CorrectnessStatus.PASSED:
+        return _result_status(correctness)
+    return {
+        PerformanceStatus.PASSED: ResultStatus.PASSED,
+        PerformanceStatus.UNSTABLE: ResultStatus.PASSED,
+        PerformanceStatus.SKIPPED: ResultStatus.PASSED,
+        PerformanceStatus.FAILED: ResultStatus.FAILED,
+        PerformanceStatus.UNSUPPORTED: ResultStatus.UNSUPPORTED,
+        PerformanceStatus.ERROR: ResultStatus.ERROR,
+        PerformanceStatus.TIMEOUT: ResultStatus.TIMEOUT,
+        PerformanceStatus.OOM: ResultStatus.OOM,
+        PerformanceStatus.CRASHED: ResultStatus.CRASHED,
+        PerformanceStatus.PLANNED: ResultStatus.ERROR,
+    }[performance]
+
+
+def _manifest_device(device_types: Sequence[str]) -> str:
+    """Project declared device support without guessing from a timer backend.
+
+    A one-device operator records exactly ``cpu`` or ``cuda``.  Until device
+    selection becomes an explicit planning dimension, a multi-device manifest
+    records its canonical sorted support set (for example ``cpu+cuda``).
+    """
+
+    devices = tuple(sorted({device.strip().lower() for device in device_types}))
+    if not devices or any(not device for device in devices):
+        raise ValueError("operator manifest device_types must not be empty")
+    return "+".join(devices)
+
+
+def _manifest_cuda_devices(device_types: Sequence[str]) -> tuple[str, ...]:
+    """Return deterministic generator devices for the current single worker."""
+
+    return (
+        ("cuda:0",)
+        if any(device.strip().lower().startswith("cuda") for device in device_types)
+        else ()
+    )
+
+
+def _environment_package_version(
+    environment_snapshot: Mapping[str, object], package: str
+) -> str | None:
+    """Read a collected package version without inventing legacy flat keys."""
+
+    packages = environment_snapshot.get("packages")
+    if not isinstance(packages, Mapping):
+        return None
+    metadata = packages.get(package)
+    if not isinstance(metadata, Mapping):
+        return None
+    version = metadata.get("version")
+    return version if isinstance(version, str) and version else None
+
+
 def _payload_for_worker_response(response) -> tuple[dict[str, object] | None, bool]:
     if response.result_payload is not None:
         return dict(response.result_payload), False
@@ -309,6 +406,32 @@ def _payload_for_worker_response(response) -> tuple[dict[str, object] | None, bo
             "diagnostic": {
                 "kind": response.outcome.value,
                 "message": response.error_message,
+            },
+            "performance": {
+                "status": "skipped",
+                "reason": "correctness_gate_failed",
+            },
+        }, False
+    if response.stage in {WorkerStage.WARMUP, WorkerStage.SAMPLING} and response.outcome in {
+        WorkerOutcome.ERROR,
+        WorkerOutcome.TIMEOUT,
+        WorkerOutcome.OOM,
+        WorkerOutcome.UNSUPPORTED,
+        WorkerOutcome.CRASHED,
+    }:
+        # Reaching either performance stage proves that the trusted worker
+        # completed the correctness gate.  A controller-side kill/crash has no
+        # result payload, so synthesize only the durable terminal status--never
+        # samples, statistics, cost, or comparison metrics.
+        return {
+            "status": "pass",
+            "case_hash": "unavailable",
+            "input_summary": {},
+            "comparison": {"metrics": {}},
+            "output_contracts": {},
+            "performance": {
+                "status": response.outcome.value,
+                "reason": response.error_message or response.outcome.value,
             },
         }, False
     return None, True
@@ -345,6 +468,7 @@ def _append_result(
     snapshot: RegistrySnapshot,
     plan: EvaluationPlan,
     response,
+    environment_snapshot: Mapping[str, object],
 ) -> tuple[bool, bool]:
     payload, infrastructure = _payload_for_worker_response(response)
     if infrastructure or payload is None:
@@ -404,6 +528,91 @@ def _append_result(
     failed_output_count = sum(not bool(output["passed"]) for output in output_rows)
     if correctness is not CorrectnessStatus.PASSED and not failed_output_count:
         failed_output_count = 1
+    # The trusted correctness gate dominates every worker-provided performance
+    # field.  A malformed/malicious candidate cannot publish samples for a
+    # failed correctness result.
+    raw_performance = (
+        payload.get("performance")
+        if correctness is CorrectnessStatus.PASSED
+        else {"status": "skipped", "reason": "correctness_gate_failed"}
+    )
+    if not isinstance(raw_performance, Mapping):
+        return False, True
+    raw_performance_status = raw_performance.get("status")
+    if not isinstance(raw_performance_status, str):
+        return False, True
+    performance = _performance_status(raw_performance_status)
+    measurements = raw_performance.get("measurements")
+    measurements = measurements if isinstance(measurements, Mapping) else {}
+    reference_measurement = measurements.get("reference")
+    candidate_measurement = measurements.get("candidate")
+    reference_measurement = (
+        reference_measurement if isinstance(reference_measurement, Mapping) else {}
+    )
+    candidate_measurement = (
+        candidate_measurement if isinstance(candidate_measurement, Mapping) else {}
+    )
+
+    def _selection(measurement: Mapping[str, object]) -> Mapping[str, object]:
+        value = measurement.get("selection")
+        return value if isinstance(value, Mapping) else {}
+
+    def _statistics(measurement: Mapping[str, object]) -> Mapping[str, object]:
+        value = measurement.get("statistics")
+        return value if isinstance(value, Mapping) else {}
+
+    reference_selection = _selection(reference_measurement)
+    candidate_selection = _selection(candidate_measurement)
+    reference_statistics = _statistics(reference_measurement)
+    candidate_statistics = _statistics(candidate_measurement)
+    sample_rows: list[dict[str, object]] = []
+    if performance in {PerformanceStatus.PASSED, PerformanceStatus.UNSTABLE}:
+        for role_index, (role, measurement, selection) in enumerate(
+            (
+                ("reference", reference_measurement, reference_selection),
+                ("candidate", candidate_measurement, candidate_selection),
+            )
+        ):
+            raw_samples = measurement.get("samples")
+            if not isinstance(raw_samples, list) or not raw_samples:
+                return False, True
+            requested_timer = selection.get("requested_timer")
+            effective_timer = selection.get("effective_timer")
+            fallback_reason = selection.get("fallback_reason")
+            if not isinstance(requested_timer, str) or not isinstance(
+                effective_timer, str
+            ):
+                return False, True
+            for raw_sample in raw_samples:
+                if not isinstance(raw_sample, Mapping):
+                    return False, True
+                sample_index = raw_sample.get("sample_index")
+                if isinstance(sample_index, bool) or not isinstance(sample_index, int):
+                    return False, True
+                sample_rows.append(
+                    {
+                        "result_id": job.result_id,
+                        "implementation_role": role,
+                        "sample_index": sample_index,
+                        "inner_iterations": raw_sample.get("inner_iterations"),
+                        "elapsed_ms": raw_sample.get("elapsed_ms"),
+                        "per_call_ms": raw_sample.get("per_call_ms"),
+                        "order_index": role_index * len(raw_samples) + sample_index,
+                        "requested_timer": requested_timer,
+                        "effective_timer": effective_timer,
+                        "fallback_reason": fallback_reason,
+                    }
+                )
+    skip_reason = (
+        str(raw_performance.get("reason") or "performance_skipped")
+        if performance is PerformanceStatus.SKIPPED
+        else None
+    )
+    cost = raw_performance.get("cost")
+    cost = cost if isinstance(cost, Mapping) else {}
+    gpu = environment_snapshot.get("gpu")
+    gpu = gpu if isinstance(gpu, Mapping) else {}
+    overall = _overall_status(correctness, performance)
     row = {
         "run_id": job.identity.run_id,
         "evaluation_id": job.identity.evaluation_id,
@@ -418,16 +627,19 @@ def _append_result(
         "candidate_source_hash": job.candidate.source_hash,
         "reference_source_hash": job.reference.source_hash,
         "environment_fingerprint": plan.environment_fingerprint,
-        "device": "cpu",
+        "device": _manifest_device(manifest.device_types),
+        "gpu_name": gpu.get("name"),
+        "cuda_version": environment_snapshot.get("cuda"),
+        "torch_version": _environment_package_version(environment_snapshot, "torch"),
         "case_id": job.case.case_id,
         "case_hash": str(payload.get("case_hash") or "unavailable"),
         "seed": job.case.seed,
         "tags": json.dumps(sorted(job.case.tags)),
         "input_summary": json.dumps(payload.get("input_summary", {}), sort_keys=True),
-        "status": _result_status(correctness).value,
+        "status": overall.value,
         "correctness_status": correctness.value,
-        "performance_status": PerformanceStatus.SKIPPED.value,
-        "skip_reason": PERFORMANCE_SKIP_REASON,
+        "performance_status": performance.value,
+        "skip_reason": skip_reason,
         "correctness_pass": correctness is CorrectnessStatus.PASSED,
         "failed_output_count": failed_output_count,
         "max_abs_error": _metric(metrics, "max_abs_error"),
@@ -437,6 +649,49 @@ def _append_result(
         "cosine_similarity": _metric(metrics, "cosine_similarity"),
         "mismatch_count": _metric(metrics, "mismatch_count"),
         "mismatch_rate": _metric(metrics, "mismatch_rate"),
+        "timer": candidate_selection.get("effective_timer"),
+        "requested_timer": candidate_selection.get("requested_timer"),
+        "effective_timer": candidate_selection.get("effective_timer"),
+        "timer_fallback_reason": candidate_selection.get("fallback_reason"),
+        "import_ms": response.stage_elapsed_s.get("import", 0.0) * 1000.0,
+        "build_ms": response.stage_elapsed_s.get("build", 0.0) * 1000.0,
+        "first_call_ms": candidate_measurement.get("first_call_ms"),
+        "warmup_ms": candidate_measurement.get("warmup_ms"),
+        "graph_capture_ms": candidate_measurement.get("graph_capture_ms"),
+        "steady_state_ms": candidate_measurement.get("steady_state_ms"),
+        "reference_first_call_ms": reference_measurement.get("first_call_ms"),
+        "reference_warmup_ms": reference_measurement.get("warmup_ms"),
+        "reference_graph_capture_ms": reference_measurement.get("graph_capture_ms"),
+        "reference_steady_state_ms": reference_measurement.get("steady_state_ms"),
+        "reference_mean_ms": reference_statistics.get("mean_ms"),
+        "reference_median_ms": reference_statistics.get("median_ms"),
+        "reference_min_ms": reference_statistics.get("min_ms"),
+        "reference_max_ms": reference_statistics.get("max_ms"),
+        "reference_stddev_ms": reference_statistics.get("stddev_ms"),
+        "reference_cv": reference_statistics.get("cv"),
+        "reference_p50_ms": reference_statistics.get("p50_ms"),
+        "reference_p90_ms": reference_statistics.get("p90_ms"),
+        "reference_p95_ms": reference_statistics.get("p95_ms"),
+        "reference_p99_ms": reference_statistics.get("p99_ms"),
+        "reference_unstable": reference_statistics.get("unstable"),
+        "candidate_mean_ms": candidate_statistics.get("mean_ms"),
+        "candidate_median_ms": candidate_statistics.get("median_ms"),
+        "candidate_min_ms": candidate_statistics.get("min_ms"),
+        "candidate_max_ms": candidate_statistics.get("max_ms"),
+        "candidate_p50_ms": candidate_statistics.get("p50_ms"),
+        "candidate_p90_ms": candidate_statistics.get("p90_ms"),
+        "candidate_p95_ms": candidate_statistics.get("p95_ms"),
+        "candidate_p99_ms": candidate_statistics.get("p99_ms"),
+        "candidate_stddev_ms": candidate_statistics.get("stddev_ms"),
+        "candidate_cv": candidate_statistics.get("cv"),
+        "candidate_unstable": candidate_statistics.get("unstable"),
+        "instability_reason": candidate_statistics.get("instability_reason"),
+        "tflops": cost.get("tflops"),
+        "effective_bandwidth_gbps": cost.get("effective_bandwidth_gbps"),
+        "flops": cost.get("flops"),
+        "estimated_bytes": cost.get("estimated_bytes"),
+        "arithmetic_intensity": cost.get("arithmetic_intensity"),
+        "throughput": cost.get("throughput"),
         "error_type": error_type,
         "error_message": error_message,
         "diagnostic_path": response.diagnostic_path,
@@ -450,8 +705,13 @@ def _append_result(
             job.output_dir / CORRECTNESS_OUTPUTS_SCHEMA.filename,
             CORRECTNESS_OUTPUTS_SCHEMA,
         ).append_many(output_rows)
+    if sample_rows:
+        AtomicCsvTable(
+            job.output_dir / PERFORMANCE_SAMPLES_SCHEMA.filename,
+            PERFORMANCE_SAMPLES_SCHEMA,
+        ).append_many(sample_rows)
     AtomicCsvTable(job.output_dir / RESULTS_SCHEMA.filename, RESULTS_SCHEMA).append(row)
-    return correctness is CorrectnessStatus.PASSED, False
+    return overall is ResultStatus.PASSED, False
 
 
 def execute_plan(
@@ -466,8 +726,6 @@ def execute_plan(
     timeout_s: float | None = None,
     controller: WorkerController | None = None,
 ) -> RunOutcome:
-    if plan.mode == "performance":
-        raise ValueError("performance mode is not implemented in Phase 7")
     writer = ArtifactWriter(output_root)
     grouped: dict[object, list[EvaluationJob]] = {}
     for job in plan.jobs:
@@ -516,7 +774,7 @@ def execute_plan(
                 writer.evaluation_dir(identity) / RESULTS_SCHEMA.filename,
                 RESULTS_SCHEMA,
             ).read_rows():
-                if existing_row["correctness_status"] == CorrectnessStatus.PASSED.value:
+                if existing_row["status"] == ResultStatus.PASSED.value:
                     passed += 1
                 else:
                     failed += 1
@@ -527,6 +785,7 @@ def execute_plan(
         if stopped or job.result_id in completed[job.identity]:
             continue
         metadata = snapshot.operator_specs[job.identity.operator_id]
+        operator_manifest = snapshot.operator_manifests[job.identity.operator_id]
         candidate_manifest = snapshot.candidate_manifests.get(
             (job.identity.operator_id, job.identity.candidate_id)
         )
@@ -542,6 +801,7 @@ def execute_plan(
                 job,
                 spec_entrypoint=metadata.entrypoint,
                 build_argv=() if build is None else build.command,
+                cuda_devices=_manifest_cuda_devices(operator_manifest.device_types),
                 timeouts=limits,
             )
         except KeyboardInterrupt:
@@ -562,7 +822,9 @@ def execute_plan(
             stopped = True
             break
         try:
-            did_pass, infra = _append_result(job, snapshot, plan, response)
+            did_pass, infra = _append_result(
+                job, snapshot, plan, response, environment_snapshot
+            )
         except Exception as error:
             infrastructure += 1
             infrastructure_identities.add(job.identity)

@@ -71,6 +71,7 @@ def build_worker_request(
     spec_entrypoint: str,
     artifact_root: Path | None = None,
     build_argv: tuple[str, ...] = (),
+    cuda_devices: tuple[str, ...] = (),
     timeouts: StageTimeouts | None = None,
 ) -> WorkerRequest:
     """Construct and statically validate a JSON-only worker request."""
@@ -108,6 +109,7 @@ def build_worker_request(
         case=job.case,
         mode=job.mode,
         resolved_config=job.resolved_config,
+        cuda_devices=tuple(cuda_devices),
         build_argv=tuple(build_argv),
         timeouts=timeouts or StageTimeouts(
             correctness_s=float(job.case.timeout_s or 300),
@@ -243,6 +245,7 @@ class WorkerController:
         *,
         spec_entrypoint: str,
         build_argv: tuple[str, ...] = (),
+        cuda_devices: tuple[str, ...] = (),
         timeouts: StageTimeouts | None = None,
     ) -> WorkerResponse:
         artifact_root = Path(job.output_dir).resolve()
@@ -262,6 +265,7 @@ class WorkerController:
             spec_entrypoint=spec_entrypoint,
             artifact_root=artifact_root,
             build_argv=build_argv,
+            cuda_devices=cuda_devices,
             timeouts=timeouts,
         )
         result_token = hashlib.sha256(job.result_id.encode("utf-8")).hexdigest()[:16]

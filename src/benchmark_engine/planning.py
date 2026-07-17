@@ -53,6 +53,10 @@ class PlanBuilder:
         seeds: tuple[int, ...] = (),
         evaluation_id: str | None = None,
         resume: bool = False,
+        performance_timer: str | None = None,
+        performance_warmup: int | None = None,
+        performance_samples: int | None = None,
+        performance_inner_iterations: int | None = None,
     ) -> EvaluationPlan:
         operator_ids = select_operators(snapshot, suite, selectors)
         issues = selected_registry_issues(
@@ -99,6 +103,10 @@ class PlanBuilder:
                 suite,
                 mode=mode,
                 seeds=seeds,
+                performance_timer=performance_timer,
+                performance_warmup=performance_warmup,
+                performance_samples=performance_samples,
+                performance_inner_iterations=performance_inner_iterations,
             )
             selected_cases = select_cases(
                 load_operator_cases(snapshot, operator_id), suite, selectors

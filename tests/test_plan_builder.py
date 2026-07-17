@@ -179,11 +179,50 @@ class PlanBuilderTest(unittest.TestCase):
             root = Path(temporary)
             write_registry(root)
             manifest = FilesystemRegistry(root).discover().operator_manifests["fixture_cpu_add"]
-            suite = SuiteConfig(1, "s", ("*",), (), ("smoke",), "performance", (3,), 9, 8)
-            resolved = resolve_evaluation_config(manifest, suite, mode="correctness", seeds=(5,))
+            operator_fallback = SuiteConfig(
+                1, "s", ("*",), (), ("smoke",), "performance", (3,), 9, 8
+            )
+            resolved = resolve_evaluation_config(manifest, operator_fallback)
+            self.assertEqual(resolved.performance_timer, "wall_clock")
+            self.assertEqual(resolved.performance_warmup, 0)
+            self.assertEqual(resolved.performance_samples, 9)
+            self.assertEqual(resolved.performance_inner_iterations, 8)
+
+            suite_override = SuiteConfig(
+                1,
+                "s",
+                ("*",),
+                (),
+                ("smoke",),
+                "performance",
+                (3,),
+                9,
+                8,
+                performance_warmup=4,
+                performance_timer="cuda_event",
+            )
+            resolved = resolve_evaluation_config(manifest, suite_override)
+            self.assertEqual(resolved.performance_timer, "cuda_event")
+            self.assertEqual(resolved.performance_warmup, 4)
+            self.assertEqual(resolved.performance_samples, 9)
+            self.assertEqual(resolved.performance_inner_iterations, 8)
+
+            resolved = resolve_evaluation_config(
+                manifest,
+                suite_override,
+                mode="correctness",
+                seeds=(5,),
+                performance_timer="cuda_graph",
+                performance_warmup=6,
+                performance_samples=11,
+                performance_inner_iterations=12,
+            )
             self.assertEqual(resolved.mode, "correctness")
             self.assertEqual(resolved.correctness_seeds, (5,))
-            self.assertEqual(resolved.performance_samples, 9)
+            self.assertEqual(resolved.performance_timer, "cuda_graph")
+            self.assertEqual(resolved.performance_warmup, 6)
+            self.assertEqual(resolved.performance_samples, 11)
+            self.assertEqual(resolved.performance_inner_iterations, 12)
             self.assertEqual(resolved.performance_timeout_s, 10)
 
 

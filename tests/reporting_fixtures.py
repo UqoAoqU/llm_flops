@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 from benchmark_engine.config import ResolvedEvaluationConfig
 from benchmark_engine.models import EvaluationIdentity
-from benchmark_engine.reporting import EvaluationManifest
+from benchmark_engine.reporting import EvaluationManifest, RESULTS_SCHEMA
 
 
 RUN_ID = "run_0123456789abcdef0123456789abcdef"
@@ -47,7 +47,7 @@ def manifest(**overrides: object) -> EvaluationManifest:
 def results_row(result_id: str = "res_0123456789abcdef0123456789abcdef") -> dict[str, object]:
     item = identity()
     return {
-        "schema_version": 1,
+        "schema_version": RESULTS_SCHEMA.version,
         "run_id": item.run_id,
         "evaluation_id": item.evaluation_id,
         "timestamp_utc": "2026-07-16T12:11:00Z",

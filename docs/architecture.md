@@ -1,10 +1,10 @@
 # Architecture
 
-Phase 7 lifecycle: Registry → runtime environment identity → deterministic plan
-→ ArtifactWriter → isolated case worker → in-worker CorrectnessEvaluator →
-controller-only CSV projection → completion or resume. The controller never
-imports candidate modules. Build/JIT remains a distinct stage; steady-state
-timing starts in Phase 8.
+Phase 8 lifecycle: Registry → runtime environment identity → deterministic plan
+→ ArtifactWriter → isolated case worker → in-worker correctness gate → staged
+performance evaluator → controller-only CSV projection → completion or resume.
+The controller never imports candidate modules. Import, build/JIT, first call,
+warmup, graph capture, and steady-state sampling remain distinct stages.
 
 The engine uses a `src/benchmark_engine` package and keeps the legacy scripts
 at the repository root until migration is complete.
@@ -23,8 +23,9 @@ The package boundaries are:
   cleanup, stage timeouts, bounded logs, and structured lifecycle events.
 - `correctness`: runtime-only input bundles, output normalization, comparators,
   bounded diagnostics, and the reference/candidate evaluator.
-- `performance`: future timers, sampling, statistics, and performance gates.
-- `reporting`: schema-v1 CSV tables, atomic artifacts, mirrored indexes, and
+- `performance`: wall-clock/CUDA timers, raw sampling, statistics, and
+  theoretical cost rates. Fair scheduling and performance gates remain future work.
+- `reporting`: versioned CSV tables, atomic artifacts, mirrored indexes, and
   resume discovery. The controller is the sole formal writer.
 - `environment`: adapters that reuse the legacy collector and fingerprints.
 - `projection`: optional per-call to model-level projections.
@@ -34,8 +35,8 @@ environment identity, and deterministic plans. Phase 4 adds the durable
 reporting boundary. Phase 5 executes only the import/build skeleton in a
 managed worker. Phase 6 implements correctness as an independent worker-local
 library but deliberately does not change the wire schema or CLI; Phase 7
-performs that integration. Performance stages remain `skipped` rather than
-being reported as successful benchmark work.
+performs that integration. Phase 8 runs performance only after correctness and
+persists hard performance failures without inventing samples.
 
 Runtime `correctness.InputBundle` and normalized leaf values may contain
 tensors and must remain in the worker. They are separate from the JSON-safe
@@ -69,7 +70,7 @@ updates replace a flushed same-directory temporary file; duplicate row keys
 are idempotent only when the complete row is identical. Resume validates the
 durable manifest before returning the set of already completed `result_id`
 values. The authoritative layouts and fields are in
-[Result layout](result-layout.md) and [CSV schema v1](csv-schema.md).
+[Result layout](result-layout.md) and [CSV schemas](csv-schema.md).
 
 ## Controller/worker boundary
 

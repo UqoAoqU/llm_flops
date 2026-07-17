@@ -1,14 +1,16 @@
 # Benchmark Engine documentation
 
-Phase 7: [CLI and exit codes](cli.md), [correctness](correctness.md),
+Phase 8: [CLI and exit codes](cli.md), [correctness](correctness.md),
+[performance measurement](performance.md),
 [result/resume layout](result-layout.md), [troubleshooting](troubleshooting.md),
 [architecture](architecture.md), and [development](development.md).
 
 The benchmark engine is being introduced alongside the existing DeepSeek V4
 and GLM-5 launchers. Through Phase 6 it provides strict discovery,
 deterministic plans, recoverable mirrored artifacts, isolated workers, and
-worker-local correctness semantics. The evaluator is connected to the CLI in
-Phase 7; performance measurement is not implemented yet.
+worker-local correctness semantics. Correctness and staged performance
+measurement are both connected to the CLI. Phase 8 retains raw samples and
+timer provenance; fairness, ranking, and performance gates remain Phase 9 work.
 
 ## Guides
 
@@ -18,9 +20,11 @@ Phase 7; performance measurement is not implemented yet.
 - [Operator contract](operator-contract.md) defines `operator.yaml` schema v1.
 - [Correctness](correctness.md) defines runtime inputs, normalized outputs,
   comparators, tolerances, diagnostics, and determinism checks.
+- [Performance](performance.md) defines timers, stage separation, sampling,
+  statistics, theoretical cost, and the exact Phase 8 boundary.
 - [Candidate guide](candidate-guide.md) defines candidate layout and hashing.
 - [Result layout](result-layout.md) defines source/result mirroring.
-- [CSV schema v1](csv-schema.md) defines result, output, sample, and index
+- [CSV schemas](csv-schema.md) define result, output, sample, and index
   tables.
 - [ADR 0001](adr/0001-result-directory-key.md) records the result directory key.
 - [Development](development.md) covers environment setup and verification.

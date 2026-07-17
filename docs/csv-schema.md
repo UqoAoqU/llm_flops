@@ -1,12 +1,18 @@
-# CSV schema v1
+# CSV schemas
 
-Applies to CSV schema version **1**. The Python authority is
+The Python authority is
 `benchmark_engine.reporting.csv_writer`; this document defines the persisted
 contract for readers and future evaluators.
 
+Phase 8 uses schema version **2** for `results.csv` and
+`performance_samples.csv`; `correctness_outputs.csv`, run indexes, and history
+remain schema version **1**. An exact, valid v1 results/sample header is read
+and atomically upgraded on the first append. Unknown headers are rejected, and
+missing v1 timer provenance is explicitly marked rather than inferred.
+
 All tables are UTF-8 comma-separated RFC 4180 files with a header and CRLF
-record terminators. `schema_version` is always the first column and the value
-is the integer `1`. Writers preserve the column order below. An empty field is
+record terminators. `schema_version` is always the first column. Writers
+preserve the column order below. An empty field is
 the only null representation: zero, `false`, and an empty JSON array are real
 values and must not stand in for unavailable data. Booleans are lower-case
 `true`/`false`; numbers are finite base-10 values; timestamps are UTC strings.
@@ -30,8 +36,7 @@ The controller is the sole writer. Each completed case/sample is persisted by
 rewriting a same-directory temporary file, flushing and fsyncing it, then using
 `os.replace()`. Repeating an identical primary key and row is idempotent;
 reusing the key with different data is a conflict and never overwrites the old
-row. Breaking changes require a new schema version; v1 readers reject unknown
-headers and other schema versions.
+row. Breaking changes require a new schema version.
 
 ## `results.csv`
 
@@ -40,7 +45,7 @@ primary key is `result_id`.
 
 | Fields (stable order) | Type | Null rule |
 |---|---|---|
-| `schema_version` | integer | required, always `1` |
+| `schema_version` | integer | required, always `2` |
 | `run_id`, `evaluation_id`, `timestamp_utc`, `suite_id`, `mode` | string | required |
 | `result_id`, `operator_id`, `candidate_id`, `reference_id` | string | required |
 | `contract_version` | integer | required |
@@ -55,10 +60,12 @@ primary key is `result_id`.
 | `correctness_pass` | boolean | empty until evaluated |
 | `failed_output_count`, `mismatch_count` | integer | empty until evaluated |
 | `max_abs_error`, `max_rel_error`, `rmse`, `rel_l2`, `cosine_similarity`, `mismatch_rate` | number | empty when not applicable |
-| `timer` | string | empty when performance was not run |
-| `import_ms`, `build_ms`, `first_call_ms`, `warmup_ms`, `graph_capture_ms` | number | empty when not measured |
-| `reference_median_ms`, `candidate_median_ms`, `candidate_p95_ms`, `candidate_stddev_ms`, `candidate_cv`, `speedup`, `slowdown_pct` | number | empty when not measured |
-| `tflops`, `effective_bandwidth_gbps`, `throughput` | number | empty when no cost model applies |
+| `timer`, `requested_timer`, `effective_timer`, `timer_fallback_reason` | string | empty when performance was not run; fallback reason empty unless selection changed |
+| `import_ms`, `build_ms`, `first_call_ms`, `warmup_ms`, `graph_capture_ms`, `steady_state_ms` and reference-prefixed stage fields | number | empty when not measured |
+| reference/candidate mean, median, min, max, p50, p90, p95, p99, population stddev and CV fields | number | empty when not measured |
+| `reference_unstable`, `candidate_unstable`, `instability_reason` | boolean/string | empty when not measured |
+| `speedup`, `slowdown_pct` | number | reserved and empty until Phase 9 |
+| `tflops`, `effective_bandwidth_gbps`, `flops`, `estimated_bytes`, `arithmetic_intensity`, `throughput` | number | empty when no theoretical cost model applies |
 | `peak_memory_bytes`, `workspace_bytes` | integer | empty when unavailable |
 | `error_type`, `error_message`, `diagnostic_path`, `stdout_path`, `stderr_path` | string | empty on success |
 | `profile_path` | string | reserved and empty while profiler support is excluded |
@@ -92,11 +99,13 @@ samples remain separate so statistics can be recalculated later.
 
 | Fields (stable order) | Type | Null rule |
 |---|---|---|
-| `schema_version` | integer | required, always `1` |
+| `schema_version` | integer | required, always `2` |
 | `result_id` | string | required |
 | `implementation_role` | string enum (`reference` or `candidate`) | required |
 | `sample_index`, `inner_iterations`, `order_index` | integer | required |
 | `elapsed_ms`, `per_call_ms` | number | required |
+| `requested_timer`, `effective_timer` | string | required |
+| `fallback_reason` | string | empty unless auto selection fell back |
 | `gpu_clock_mhz`, `memory_clock_mhz`, `temperature_c`, `power_w` | number | empty when telemetry is unavailable; never fake zero |
 
 ## Index CSVs

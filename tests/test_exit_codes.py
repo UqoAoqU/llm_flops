@@ -34,19 +34,12 @@ class ExitCodeTests(unittest.TestCase):
         self.assertEqual(RunOutcome("run", (), 0, 0, 1).exit_code, 3)
         self.assertEqual(RunOutcome("run", (), 0, 0, 0, interrupted=True).exit_code, 130)
 
-    def test_selector_and_performance_mode_are_usage_errors(self):
+    def test_selector_errors_exit_two(self):
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary) / "results"
             self.assertEqual(
                 main(
                     ("run", "--operator", "missing", "--output-root", str(output)),
-                    repository_root=ROOT,
-                ),
-                2,
-            )
-            self.assertEqual(
-                main(
-                    ("run", "--mode", "performance", "--output-root", str(output)),
                     repository_root=ROOT,
                 ),
                 2,
@@ -81,6 +74,8 @@ class ExitCodeTests(unittest.TestCase):
                 pass
 
             def run(self, job, **_kwargs):
+                if _kwargs.get("cuda_devices") != ():
+                    raise AssertionError("CPU manifest must pass no CUDA generator devices")
                 error_fields = {
                     WorkerOutcome.ERROR: ("ImportError", "reference import failed"),
                     WorkerOutcome.CRASHED: ("WorkerCrash", "worker exited without payload"),

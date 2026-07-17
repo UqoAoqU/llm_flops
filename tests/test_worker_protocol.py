@@ -7,6 +7,8 @@ from pathlib import Path
 
 from benchmark_engine.config import ResolvedEvaluationConfig
 from benchmark_engine.execution.protocol import (
+    PROTOCOL_SCHEMA_VERSION,
+    WORKER_REQUEST_SCHEMA_VERSION,
     EventName,
     ProtocolError,
     StageTimeouts,
@@ -48,8 +50,20 @@ def request() -> WorkerRequest:
 class WorkerProtocolTests(unittest.TestCase):
     def test_request_json_round_trip_is_lossless(self) -> None:
         value = request()
+        self.assertEqual(value.schema_version, WORKER_REQUEST_SCHEMA_VERSION)
         self.assertEqual(WorkerRequest.from_json(value.to_json()), value)
         json.dumps(value.to_dict(), allow_nan=False)
+
+    def test_version_one_request_migrates_without_cuda_devices(self) -> None:
+        legacy = request().to_dict()
+        legacy["schema_version"] = PROTOCOL_SCHEMA_VERSION
+        legacy.pop("cuda_devices")
+        migrated = WorkerRequest.from_dict(legacy)
+        self.assertEqual(migrated.schema_version, WORKER_REQUEST_SCHEMA_VERSION)
+        self.assertEqual(migrated.cuda_devices, ())
+        self.assertEqual(
+            migrated.to_dict()["schema_version"], WORKER_REQUEST_SCHEMA_VERSION
+        )
 
     def test_response_json_round_trip_is_lossless(self) -> None:
         value = WorkerResponse(
@@ -67,6 +81,7 @@ class WorkerProtocolTests(unittest.TestCase):
             error_message="short message",
             exit_code=1,
         )
+        self.assertEqual(value.schema_version, PROTOCOL_SCHEMA_VERSION)
         self.assertEqual(WorkerResponse.from_json(value.to_json()), value)
 
         base = value.to_dict()
@@ -119,7 +134,7 @@ class WorkerProtocolTests(unittest.TestCase):
         wrong_type["build_argv"] = "python -c pass"
         variants.append(wrong_type)
         version = dict(base)
-        version["schema_version"] = 2
+        version["schema_version"] = WORKER_REQUEST_SCHEMA_VERSION + 1
         variants.append(version)
         relative = dict(base)
         relative["candidate_root"] = "relative/path"
@@ -174,6 +189,7 @@ class WorkerProtocolTests(unittest.TestCase):
             for index, (name, stage, status) in enumerate(names)
         )
         validate_event_sequence(events)
+        self.assertEqual(events[0].schema_version, PROTOCOL_SCHEMA_VERSION)
         self.assertEqual(WorkerEvent.from_json(events[3].to_json()), events[3])
         bad = replace(events[3], sequence=99)
         with self.assertRaises(ProtocolError):

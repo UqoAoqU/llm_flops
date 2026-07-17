@@ -31,6 +31,8 @@ class SuiteConfig:
     performance_samples: int
     performance_inner_iterations: int
     candidate_include: tuple[str, ...] = ("*",)
+    performance_warmup: int | None = None
+    performance_timer: str | None = None
 
 
 def _fail(code: str, path: Path, field: str, message: str) -> None:
@@ -117,12 +119,25 @@ def load_suite(path: Path) -> SuiteConfig:
     correctness = _mapping(root["correctness"], path, "correctness")
     _fields(correctness, path, "correctness", frozenset({"seeds"}))
     performance = _mapping(root["performance"], path, "performance")
-    _fields(
-        performance,
-        path,
-        "performance",
-        frozenset({"samples", "inner_iterations"}),
+    performance_required = frozenset({"samples", "inner_iterations"})
+    missing_performance = performance_required.difference(performance)
+    unknown_performance = set(performance).difference(
+        performance_required | {"warmup", "timer"}
     )
+    if missing_performance:
+        _fail(
+            "missing_field",
+            path,
+            "performance",
+            f"missing {', '.join(sorted(missing_performance))}",
+        )
+    if unknown_performance:
+        _fail(
+            "unknown_field",
+            path,
+            "performance",
+            f"unknown {', '.join(sorted(unknown_performance))}",
+        )
     mode = _string(root["mode"], path, "mode")
     candidate_include = ("*",)
     if "candidates" in root:
@@ -145,6 +160,25 @@ def load_suite(path: Path) -> SuiteConfig:
         _fail("value", path, "correctness.seeds", "must not be empty")
     if len(set(seeds)) != len(seeds):
         _fail("value", path, "correctness.seeds", "must not contain duplicates")
+    performance_timer = None
+    if "timer" in performance:
+        performance_timer = _string(performance["timer"], path, "performance.timer")
+        if performance_timer not in {"auto", "cuda_event", "cuda_graph", "wall_clock"}:
+            _fail(
+                "value",
+                path,
+                "performance.timer",
+                "must be auto, cuda_event, cuda_graph, or wall_clock",
+            )
+    performance_warmup = None
+    if "warmup" in performance:
+        performance_warmup = _integer(
+            performance["warmup"], path, "performance.warmup"
+        )
+        if performance_warmup < 0:
+            _fail(
+                "value", path, "performance.warmup", "must be non-negative"
+            )
     return SuiteConfig(
         schema_version=version,
         suite_id=_string(root["suite_id"], path, "suite_id"),
@@ -163,6 +197,8 @@ def load_suite(path: Path) -> SuiteConfig:
             positive=True,
         ),
         candidate_include=candidate_include,
+        performance_warmup=performance_warmup,
+        performance_timer=performance_timer,
     )
 
 

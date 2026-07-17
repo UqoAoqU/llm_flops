@@ -87,6 +87,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run_parser.add_argument("--fail-fast", action="store_true")
     run_parser.add_argument("--timeout-s", type=float)
+    run_parser.add_argument(
+        "--timer",
+        choices=("auto", "cuda_event", "cuda_graph", "wall_clock"),
+        help="steady-state timer (CLI overrides suite/operator defaults)",
+    )
+    run_parser.add_argument("--warmup", type=int, help="performance warmup calls")
+    run_parser.add_argument("--samples", type=int, help="raw performance samples")
+    run_parser.add_argument(
+        "--inner-iterations", type=int, help="calls represented by each raw sample"
+    )
 
     summary_parser = commands.add_parser(
         "summarize", help="summarize existing artifacts without executing code"
@@ -261,11 +271,13 @@ def main(
                     mode=arguments.mode,
                     seeds=tuple(arguments.seed),
                     evaluation_id=arguments.evaluation_id,
+                    performance_timer=arguments.timer,
+                    performance_warmup=arguments.warmup,
+                    performance_samples=arguments.samples,
+                    performance_inner_iterations=arguments.inner_iterations,
                 )
                 print(json.dumps(plan.to_dict(), indent=2, sort_keys=True))
                 return 0
-            if arguments.mode == "performance":
-                raise ValueError("performance mode is not implemented in Phase 7")
             if arguments.resume is not None:
                 if any(
                     (
@@ -278,6 +290,10 @@ def main(
                         arguments.evaluation_id,
                         arguments.suite,
                         arguments.mode,
+                        arguments.timer,
+                        arguments.warmup is not None,
+                        arguments.samples is not None,
+                        arguments.inner_iterations is not None,
                     )
                 ):
                     raise ValueError("--resume cannot be combined with selectors or identity overrides")
@@ -293,6 +309,10 @@ def main(
                     mode=arguments.mode or "correctness",
                     seeds=tuple(arguments.seed),
                     evaluation_id=arguments.evaluation_id,
+                    performance_timer=arguments.timer,
+                    performance_warmup=arguments.warmup,
+                    performance_samples=arguments.samples,
+                    performance_inner_iterations=arguments.inner_iterations,
                 )
             outcome = execute_plan(
                 plan,

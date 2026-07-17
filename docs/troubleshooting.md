@@ -5,11 +5,12 @@
 - Hard timeout: the whole worker process group is terminated; later cases run by default.
 - Single-case diagnosis: copy the reproduction command from `bench summarize`.
 - Interrupted run: `./bench.sh run --resume RUN_ID`.
-- `performance_not_implemented` is the expected Phase-7 skip, not a pass.
+- A correctness-only run records `performance_status=skipped` with
+  `skip_reason=correctness_only_mode`; this is not a performance pass.
 
 Historical note: Phase 5 introduced import/build isolation. The current Phase 7
-worker also evaluates correctness. Performance stages remain explicitly skipped
-until Phase 8.
+correctness workflow was extended in Phase 8 with correctness-gated performance
+measurement and explicit warmup/sampling stages.
 
 ## A worker times out during import or build
 
@@ -29,8 +30,7 @@ Do not disable the timeout or treat compiler output as a successful stage.
 - `oom`: `MemoryError` or a recognized CPU/CUDA out-of-memory diagnostic.
 - `crashed`: signal/nonzero exit without a valid structured response.
 - `unsupported`: an explicit `NotImplementedError` or unsupported backend.
-- `interrupted`: controller cleanup following Ctrl-C (CLI exit code 130 once
-  the non-dry execution workflow is enabled).
+- `interrupted`: controller cleanup following Ctrl-C (CLI exit code 130).
 
 The response error is intentionally short. Follow `diagnostic_path` for the
 full traceback or controller crash summary. A missing/invalid response is not

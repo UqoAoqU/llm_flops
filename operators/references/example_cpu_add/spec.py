@@ -52,11 +52,16 @@ class VectorAddSpec:
         )
 
     def cost_model(self, case):
-        return None
+        size = int(case.symbols["size"])
+        return {
+            "flops": size,
+            "estimated_bytes": size * 8 * 3,
+            "throughput_units": size,
+        }
 
 
 SPEC = VectorAddSpec()
 
 
 def cost_model(case):
-    return None
+    return SPEC.cost_model(case)

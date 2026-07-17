@@ -4,8 +4,10 @@ DeepSeek V4 Pro Prefill、Decode 及各算子的 CUDA 性能测试。底层后�
 
 ## Benchmark Engine
 
-> Phase 7 status: the correctness CLI is now enabled. Performance remains
-> intentionally skipped as `performance_not_implemented` until Phase 8.
+> Phase 8 status: correctness-gated performance measurement is enabled with
+> wall-clock, CUDA Event, CUDA Graph, and visible auto-fallback timers. Fair
+> scheduling, ranking, and performance gates are intentionally deferred to
+> Phase 9.
 
 ### Five-minute CPU quick start
 
@@ -28,8 +30,26 @@ intentional numerical failure and its reproduction command:
 ./bench.sh run --resume <run_id>
 ```
 
-Exit codes are 0 for pass, 1 for a correctness gate failure, 2 for usage or
-configuration, 3 for worker/engine infrastructure, and 130 for Ctrl-C. Every
+To run the included CPU performance example with the Phase 8 defaults
+(warmup 5, samples 30, inner iterations 20):
+
+```bash
+./bench.sh run --mode performance \
+  --operator example_cpu_add \
+  --candidate quickstart__20260716T120000Z__4279e756 \
+  --case tiny --timer wall_clock \
+  --warmup 5 --samples 30 --inner-iterations 20
+```
+
+The mirrored evaluation directory contains `results.csv` schema v2 and
+`performance_samples.csv` schema v2. Summary rows include requested/effective
+timer, fallback reason, stage times, reference/candidate statistics, stability,
+and optional theoretical cost rates. See the
+[performance guide](docs/performance.md) for the field semantics and Phase 8
+scope.
+
+Exit codes are 0 for pass, 1 for a correctness or performance failure, 2 for
+usage or configuration, 3 for worker/engine infrastructure, and 130 for Ctrl-C. Every
 completed case is durable before the next case starts; resume never reruns an
 existing `result_id`. These commands need no GPU and do not change `run.sh`.
 
@@ -43,9 +63,10 @@ existing `result_id`. These commands need no GPU and do not change `run.sh`.
 ./bench.sh --help
 ~~~
 
-`bench list`、`bench validate`、`bench env`、`bench run --dry-run` 与 Phase 7
-CPU correctness 执行均已可用。Phase 6 提供的输入隔离、输出标准化、Comparator
-和 Evaluator API 已由 Phase 7 接入隔离 worker；性能测量将在 Phase 8 接入。
+`bench list`、`bench validate`、`bench env`、`bench run --dry-run`、CPU
+correctness 和 Phase 8 performance 执行均已可用。输入隔离、输出标准化、
+Comparator、Timer 和 Evaluator API 均在隔离 worker 内运行；正确性失败会阻断
+正式性能采样。
 正确性契约见
 [correctness guide](docs/correctness.md)。
 架构与开发约定见 [文档索引](docs/index.md)，完整方案见

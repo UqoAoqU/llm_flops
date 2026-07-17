@@ -44,13 +44,13 @@ suite. `--output-root`, `--evaluation-id` (exactly one selected candidate), and
 `--resume` affect planning. An existing evaluation path is rejected unless
 `--resume` is present. Phase 4 provides the durable run-index/manifest resume
 reader used by the execution CLI. The Controller/Worker API isolates import,
-build, and Phase-7 correctness execution.
+build, correctness, warmup, and performance sampling.
 
 Dry-run prints stable-key JSON and has no formal filesystem side effects. Its
 environment fingerprint is explicitly marked `provisional/dry-run` and is a
-SHA-256 of normalized dependency-lock contents. A non-dry correctness run uses
-a runtime fingerprint and durable artifacts.
+SHA-256 of normalized dependency-lock contents. A non-dry run uses a runtime
+fingerprint and durable artifacts.
 
 Artifact writers and the managed worker back the correctness CLI. Their
 state and compatibility rules are documented in [Result layout](result-layout.md)
-and [CSV schema v1](csv-schema.md); no CLI command bypasses those rules.
+and [CSV schemas](csv-schema.md); no CLI command bypasses those rules.

@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+import math
 
 
 DEFAULT_OUTPUT_ROOT = Path("results")
@@ -49,6 +50,25 @@ class ResolvedEvaluationConfig:
                 raise ValueError(f"{name} must be positive")
         if self.performance_warmup < 0:
             raise ValueError("performance_warmup must be non-negative")
+        if self.performance_timer not in {
+            "auto",
+            "cuda_event",
+            "cuda_graph",
+            "wall_clock",
+        }:
+            raise ValueError(
+                "performance_timer must be auto, cuda_event, cuda_graph, or wall_clock"
+            )
+        if self.performance_graph_mode not in {"auto", "enabled", "disabled"}:
+            raise ValueError("performance_graph_mode must be auto, enabled, or disabled")
+        for name in (
+            "correctness_rtol",
+            "correctness_atol",
+            "performance_regression_threshold_pct",
+        ):
+            value = getattr(self, name)
+            if not math.isfinite(float(value)) or value < 0:
+                raise ValueError(f"{name} must be finite and non-negative")
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -137,6 +157,10 @@ def resolve_evaluation_config(
     *,
     mode: str | None = None,
     seeds: tuple[int, ...] = (),
+    performance_timer: str | None = None,
+    performance_warmup: int | None = None,
+    performance_samples: int | None = None,
+    performance_inner_iterations: int | None = None,
 ) -> ResolvedEvaluationConfig:
     """Resolve CLI > suite > operator manifest > engine defaults."""
 
@@ -152,11 +176,31 @@ def resolve_evaluation_config(
         correctness_atol=getattr(correctness, "atol", defaults.correctness_atol),
         correctness_equal_nan=getattr(correctness, "equal_nan", defaults.correctness_equal_nan),
         correctness_determinism_repeats=getattr(correctness, "determinism_repeats", defaults.correctness_determinism_repeats),
-        performance_timer=getattr(performance, "timer", defaults.performance_timer),
+        performance_timer=(
+            performance_timer
+            or getattr(suite, "performance_timer", None)
+            or getattr(performance, "timer", defaults.performance_timer)
+        ),
         performance_graph_mode=getattr(performance, "graph_mode", defaults.performance_graph_mode),
-        performance_warmup=getattr(performance, "warmup", defaults.performance_warmup),
-        performance_samples=getattr(suite, "performance_samples", None) or getattr(performance, "samples", defaults.performance_samples),
-        performance_inner_iterations=getattr(suite, "performance_inner_iterations", None) or getattr(performance, "inner_iterations", defaults.performance_inner_iterations),
+        performance_warmup=(
+            performance_warmup
+            if performance_warmup is not None
+            else getattr(suite, "performance_warmup", None)
+            if getattr(suite, "performance_warmup", None) is not None
+            else getattr(performance, "warmup", defaults.performance_warmup)
+        ),
+        performance_samples=(
+            performance_samples
+            if performance_samples is not None
+            else getattr(suite, "performance_samples", None)
+            or getattr(performance, "samples", defaults.performance_samples)
+        ),
+        performance_inner_iterations=(
+            performance_inner_iterations
+            if performance_inner_iterations is not None
+            else getattr(suite, "performance_inner_iterations", None)
+            or getattr(performance, "inner_iterations", defaults.performance_inner_iterations)
+        ),
         performance_timeout_s=getattr(performance, "timeout_s", defaults.performance_timeout_s),
         performance_regression_threshold_pct=getattr(performance, "regression_threshold_pct", defaults.performance_regression_threshold_pct),
     )

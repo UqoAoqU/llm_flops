@@ -28,7 +28,11 @@ from benchmark_engine.ids import (
 from benchmark_engine.models import CaseSpec, EvaluationIdentity
 
 
+# Worker events and responses retain the Phase 7 wire format so persisted
+# transcripts remain readable.  Phase 8 changes only WorkerRequest by adding
+# explicit CUDA generator devices.
 PROTOCOL_SCHEMA_VERSION = 1
+WORKER_REQUEST_SCHEMA_VERSION = 2
 
 
 class ProtocolError(ValueError):
@@ -138,12 +142,14 @@ def _number(value: object, field: str, *, positive: bool = False) -> float:
     return number
 
 
-def _version(value: object, field: str) -> int:
+def _version(
+    value: object, field: str, *, expected: int = PROTOCOL_SCHEMA_VERSION
+) -> int:
     version = _integer(value, field)
-    if version != PROTOCOL_SCHEMA_VERSION:
+    if version != expected:
         raise ProtocolError(
             f"{field} unsupported schema version {version}; "
-            f"expected {PROTOCOL_SCHEMA_VERSION}"
+            f"expected {expected}"
         )
     return version
 
@@ -253,18 +259,26 @@ class WorkerRequest:
     case: CaseSpec
     mode: str
     resolved_config: ResolvedEvaluationConfig
+    cuda_devices: tuple[str, ...] = ()
     build_argv: tuple[str, ...] = ()
     timeouts: StageTimeouts = StageTimeouts()
-    schema_version: int = PROTOCOL_SCHEMA_VERSION
+    schema_version: int = WORKER_REQUEST_SCHEMA_VERSION
 
     def __post_init__(self) -> None:
-        if self.schema_version != PROTOCOL_SCHEMA_VERSION:
+        if self.schema_version != WORKER_REQUEST_SCHEMA_VERSION:
             raise ProtocolError("WorkerRequest schema_version is incompatible")
         _validate_identity(self.identity, self.result_id, "WorkerRequest")
         if self.mode not in {"all", "correctness", "performance"}:
             raise ProtocolError("mode must be all, correctness, or performance")
         if self.resolved_config.mode != self.mode:
             raise ProtocolError("mode and resolved_config.mode disagree")
+        if not isinstance(self.cuda_devices, tuple) or not all(
+            isinstance(device, str) and device.startswith("cuda:")
+            for device in self.cuda_devices
+        ):
+            raise ProtocolError("cuda_devices must be a tuple of CUDA device names")
+        if len(set(self.cuda_devices)) != len(self.cuda_devices):
+            raise ProtocolError("cuda_devices must not contain duplicates")
         for name in ("reference_root", "candidate_root", "artifact_root"):
             path = getattr(self, name)
             if not isinstance(path, Path) or not path.is_absolute():
@@ -288,6 +302,7 @@ class WorkerRequest:
             "case": self.case.to_dict(),
             "mode": self.mode,
             "resolved_config": self.resolved_config.to_dict(),
+            "cuda_devices": list(self.cuda_devices),
             "build_argv": list(self.build_argv),
             "timeouts": self.timeouts.to_dict(),
         }
@@ -295,7 +310,7 @@ class WorkerRequest:
     @classmethod
     def from_dict(cls, value: Mapping[str, object]) -> "WorkerRequest":
         data = _object(value, "WorkerRequest")
-        required = frozenset(
+        common_required = frozenset(
             {
                 "schema_version",
                 "identity",
@@ -313,14 +328,34 @@ class WorkerRequest:
                 "timeouts",
             }
         )
-        _fields(data, required=required, field="WorkerRequest")
+        version = _integer(data.get("schema_version"), "WorkerRequest.schema_version")
+        if version == PROTOCOL_SCHEMA_VERSION:
+            _fields(data, required=common_required, field="WorkerRequest")
+            cuda_devices: object = []
+        elif version == WORKER_REQUEST_SCHEMA_VERSION:
+            _fields(
+                data,
+                required=common_required | frozenset({"cuda_devices"}),
+                field="WorkerRequest",
+            )
+            cuda_devices = data["cuda_devices"]
+        else:
+            raise ProtocolError(
+                "WorkerRequest.schema_version unsupported schema version "
+                f"{version}; expected {PROTOCOL_SCHEMA_VERSION} or "
+                f"{WORKER_REQUEST_SCHEMA_VERSION}"
+            )
         argv = data["build_argv"]
         if not isinstance(argv, list) or not all(
             isinstance(part, str) and part for part in argv
         ):
             raise ProtocolError("WorkerRequest.build_argv must be an array of strings")
+        if not isinstance(cuda_devices, list) or not all(
+            isinstance(device, str) for device in cuda_devices
+        ):
+            raise ProtocolError("WorkerRequest.cuda_devices must be an array of strings")
         return cls(
-            schema_version=_version(data["schema_version"], "WorkerRequest.schema_version"),
+            schema_version=WORKER_REQUEST_SCHEMA_VERSION,
             identity=EvaluationIdentity.from_dict(
                 _object(data["identity"], "WorkerRequest.identity")
             ),
@@ -354,6 +389,7 @@ class WorkerRequest:
             resolved_config=ResolvedEvaluationConfig.from_dict(
                 _object(data["resolved_config"], "WorkerRequest.resolved_config")
             ),
+            cuda_devices=tuple(cuda_devices),
             build_argv=tuple(argv),
             timeouts=StageTimeouts.from_dict(
                 _object(data["timeouts"], "WorkerRequest.timeouts")
@@ -746,6 +782,7 @@ def response_outcome_from_text(text: str) -> WorkerOutcome | None:
 
 __all__ = [
     "PROTOCOL_SCHEMA_VERSION",
+    "WORKER_REQUEST_SCHEMA_VERSION",
     "EventName",
     "ProtocolError",
     "StageTimeouts",
