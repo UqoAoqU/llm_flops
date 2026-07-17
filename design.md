@@ -335,6 +335,11 @@ glm5_dsa_indexer_score
 <task_identifier>__<UTC timestamp>__<source short hash>
 ```
 
+该格式只用于增强来源可读性，不作为 Registry 的强制校验条件。
+`candidate_id` 只需在同一个 `operator_id` 下不重复，并且是安全的单层目录名；
+绝对路径、`.`、`..` 和路径分隔符仍必须拒绝。为保证跨平台结果目录稳定，
+仅大小写不同的名称视为冲突。
+
 示例：
 
 ```text
@@ -344,7 +349,7 @@ issue_731__20260716T083000Z__e5f6a7b8
 
 `task_identifier` 表示生成该 candidate 的任务、需求、实验或工作项标识，不要求是 Agent 名称。它可以来自内部 task ID、Issue ID、实验编号或人工约定，但应满足小写字母、数字、下划线和短横线组成的稳定命名规则。Agent 名称、模型名称或生成工具可作为 `candidate.yaml` metadata 单独记录。
 
-`candidate_id` 在同一个 `operator_id` 下唯一。重新生成或修改代码必须产生新的 ID，避免旧结果被静默覆盖。目录映射时，结果目录必须复用完全相同的 `operator_id` 与 `candidate_id`。
+`candidate_id` 在同一个 `operator_id` 下唯一。重新生成或修改代码后建议使用新的 ID，避免历史含义混淆；Registry 仍会单独计算和记录 `source_hash`，不要求名称包含或匹配该 hash。目录映射时，结果目录必须复用完全相同的 `operator_id` 与 `candidate_id`。
 
 ### 6.3 自动映射
 
@@ -1274,7 +1279,8 @@ pending | in_progress | blocked | completed
 
 ## Candidate Destination
 task_identifier: <task/issue/experiment id>
-candidate_id: <task_identifier>__<UTC timestamp>__<source short hash>
+candidate_id: <unique path-safe name>
+recommended_candidate_id: <task_identifier>__<UTC timestamp>__<source short hash>
 operators/candidates/<operator_id>/<candidate_id>/
 expected_result_root: results/<operator_id>/<candidate_id>/
 

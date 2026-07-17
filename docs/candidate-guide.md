@@ -6,10 +6,11 @@ only `implementation.py` with an `operator` attribute; it therefore uses the
 default `implementation:operator` entrypoint. The
 [minimal candidate](examples/minimal-candidate/implementation.py) is copyable.
 
-Candidate IDs have the form
-`<task_identifier>__<YYYYMMDDTHHMMSSZ>__<8-or-more-lowercase-hex>`. The final
-component must be a prefix of the stable source SHA-256 computed by the
-registry.
+Candidate IDs may use any non-empty, path-safe directory name that is unique
+under the same `operator_id`. Absolute paths, `.`/`..`, `/`, and `\\` are
+rejected, and names that differ only by case are treated as collisions for
+portable result layouts. The recommended, but optional, form is
+`<task_identifier>__<YYYYMMDDTHHMMSSZ>__<8-or-more-lowercase-hex>`.
 
 Complex candidates can add a strict `candidate.yaml`:
 
@@ -28,10 +29,12 @@ metadata:
 
 Build commands are argv string arrays. Shell command strings are rejected,
 and metadata must be JSON-safe. All source files, modes, and relative POSIX
-paths affect the source hash, except caches, bytecode, build output, egg-info,
-and common editor temporary files. Symlinks are rejected.
+paths affect the separately recorded source hash, except caches, bytecode,
+build output, egg-info, and common editor temporary files. Symlinks are
+rejected. The candidate name is not required to contain or match this hash.
 
-`candidate.yaml` also affects the hash. To avoid an ID/hash circularity, its
-YAML mapping is converted to sorted compact JSON after removing only the
-`candidate_id` field. Consequently every other manifest change requires a new
-candidate ID suffix.
+`candidate.yaml` also affects the hash. Its YAML mapping is converted to sorted
+compact JSON after removing only the `candidate_id` field, so a rename does not
+change source identity. Every other manifest change changes the recorded source
+hash. Choosing a new candidate name after a source change remains recommended
+for readable history, but is not a Registry acceptance condition.

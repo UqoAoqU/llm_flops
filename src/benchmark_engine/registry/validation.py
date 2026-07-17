@@ -17,7 +17,6 @@ import yaml
 
 from benchmark_engine.ids import (
     IdentifierError,
-    candidate_hash_suffix,
     validate_candidate_id,
     validate_operator_id,
 )
@@ -585,9 +584,8 @@ def compute_source_hash(root: Path) -> str:
 
     ``candidate.yaml`` participates in the hash, but its ``candidate_id`` field
     is removed and the remaining YAML value is encoded as sorted canonical JSON.
-    This deliberately breaks the otherwise circular dependency between the ID
-    hash suffix and the manifest containing that ID.  Every other manifest field
-    remains hash-significant.
+    Candidate naming is user-defined, so source identity remains independent of
+    renames while every other manifest field remains hash-significant.
     """
 
     root = Path(root)
@@ -632,14 +630,3 @@ def compute_source_hash(root: Path) -> str:
         _hash_frame(digest, mode)
         _hash_frame(digest, content)
     return digest.hexdigest()
-
-
-def validate_candidate_hash(candidate_id: str, source_hash: str) -> None:
-    """Require the ID's lowercase hex suffix to prefix the full source hash."""
-
-    suffix = candidate_hash_suffix(candidate_id)
-    if not source_hash.startswith(suffix):
-        raise ValueError(
-            f"candidate hash suffix {suffix!r} does not match source hash "
-            f"{source_hash!r}"
-        )

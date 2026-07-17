@@ -25,7 +25,6 @@ from .validation import (
     compute_source_hash,
     parse_candidate_manifest,
     parse_operator_manifest,
-    validate_candidate_hash,
     validate_entrypoint,
 )
 
@@ -342,17 +341,6 @@ class FilesystemRegistry:
                 except SourceHashError as error:
                     issues.append(_issue(error.code, error.path, "$", str(error)))
                     continue
-                try:
-                    validate_candidate_hash(candidate_id, source_hash)
-                except ValueError as error:
-                    issues.append(
-                        _issue(
-                            "candidate.hash_mismatch",
-                            manifest_path if manifest_path.exists() else candidate_root,
-                            "candidate_id",
-                            str(error),
-                        )
-                    )
                 if len(issues) != before or operator_id not in references:
                     continue
 

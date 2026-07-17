@@ -10,7 +10,7 @@ from benchmark_engine.ids import (
 )
 
 
-CANDIDATE = "task__20260716T081500Z__abcdef12"
+CANDIDATE = "test_impl"
 
 
 class ResultPathTest(unittest.TestCase):

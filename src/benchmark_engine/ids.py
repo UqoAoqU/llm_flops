@@ -11,6 +11,8 @@ from pathlib import Path
 
 
 OPERATOR_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]{2,79}$")
+# This pattern documents and recognizes the recommended provenance-rich form;
+# it is deliberately not an acceptance condition for candidate IDs.
 CANDIDATE_ID_PATTERN = re.compile(
     r"^(?P<task>[a-z0-9][a-z0-9_-]{0,79})__"
     r"(?P<timestamp>[0-9]{8}T[0-9]{6}Z)__"
@@ -34,10 +36,12 @@ def _reject_path_syntax(value: object, name: str) -> str:
         raise IdentifierError(f"{name} must be a string")
     if not value:
         raise IdentifierError(f"{name} must not be empty")
+    if "\x00" in value:
+        raise IdentifierError(f"{name} must not contain NUL")
     if Path(value).is_absolute() or value in {".", ".."}:
         raise IdentifierError(f"{name} must be one relative path component")
-    if "/" in value or "\\" in value or ".." in value:
-        raise IdentifierError(f"{name} must not contain traversal or separators")
+    if "/" in value or "\\" in value:
+        raise IdentifierError(f"{name} must not contain path separators")
     return value
 
 
@@ -60,21 +64,26 @@ def validate_operator_id(operator_id: object) -> str:
 
 
 def validate_candidate_id(candidate_id: object) -> str:
-    value = _reject_path_syntax(candidate_id, "candidate_id")
+    """Accept any non-empty candidate directory name that is path-safe.
+
+    Uniqueness is a registry concern scoped by ``operator_id``.  The former
+    task/timestamp/hash structure remains available as a recommendation only.
+    """
+
+    return _reject_path_syntax(candidate_id, "candidate_id")
+
+
+def candidate_hash_suffix(candidate_id: str) -> str | None:
+    """Return the hash hint from a canonical recommended ID, if present."""
+
+    value = validate_candidate_id(candidate_id)
     match = CANDIDATE_ID_PATTERN.fullmatch(value)
     if match is None:
-        raise IdentifierError(
-            "candidate_id must be <task_identifier>__<YYYYMMDDTHHMMSSZ>__"
-            "<8-or-more lowercase hex>"
-        )
-    _validate_utc_timestamp(match.group("timestamp"), "candidate_id")
-    return value
-
-
-def candidate_hash_suffix(candidate_id: str) -> str:
-    validate_candidate_id(candidate_id)
-    match = CANDIDATE_ID_PATTERN.fullmatch(candidate_id)
-    assert match is not None
+        return None
+    try:
+        _validate_utc_timestamp(match.group("timestamp"), "candidate_id")
+    except IdentifierError:
+        return None
     return match.group("hash")
 
 

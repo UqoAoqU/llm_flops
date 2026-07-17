@@ -58,10 +58,7 @@ class PlanBuilderTest(unittest.TestCase):
             bad_root, bad = write_candidate(
                 root, "bad", "20260716T081600Z", with_manifest=False
             )
-            (bad_root / "implementation.py").write_text(
-                "def operator(left, right):\n    return left - right\n",
-                encoding="utf-8",
-            )
+            (bad_root / "implementation.py").unlink()
             broken = write_reference(root, "broken_cpu_add")
             manifest = broken / "operator.yaml"
             manifest.write_text(
@@ -95,10 +92,7 @@ class PlanBuilderTest(unittest.TestCase):
             bad_root, bad = write_candidate(
                 root, "bad", "20260716T081600Z", with_manifest=False
             )
-            (bad_root / "implementation.py").write_text(
-                "def operator(left, right):\n    return left - right\n",
-                encoding="utf-8",
-            )
+            (bad_root / "implementation.py").unlink()
             broken = write_reference(root, "broken_cpu_add")
             manifest = broken / "operator.yaml"
             manifest.write_text(

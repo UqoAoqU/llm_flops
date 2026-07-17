@@ -171,7 +171,7 @@ class FilesystemRegistryTest(unittest.TestCase):
                 {issue.code for issue in FilesystemRegistry(root).discover().issues},
             )
 
-    def test_hash_mismatch_is_stable_error(self):
+    def test_candidate_name_is_independent_of_recorded_source_hash(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             write_reference(root)
@@ -181,12 +181,40 @@ class FilesystemRegistryTest(unittest.TestCase):
                 "20260716T081500Z",
                 with_manifest=True,
             )
-            wrong_id = candidate_id[:-8] + "00000000"
-            candidate.rename(candidate.with_name(wrong_id))
-            manifest = candidate.with_name(wrong_id) / "candidate.yaml"
-            manifest.write_text(manifest.read_text().replace(candidate_id, wrong_id))
+            source_hash = next(
+                item.source_hash
+                for item in FilesystemRegistry(root).discover().candidates[OPERATOR_ID]
+            )
+            arbitrary_id = "Human readable candidate"
+            renamed = candidate.with_name(arbitrary_id)
+            candidate.rename(renamed)
+            manifest = renamed / "candidate.yaml"
+            manifest.write_text(
+                manifest.read_text().replace(candidate_id, arbitrary_id)
+            )
+            snapshot = FilesystemRegistry(root).discover()
+            self.assertTrue(snapshot.is_valid, snapshot.issues)
+            implementation = snapshot.candidates[OPERATOR_ID][0]
+            self.assertEqual(implementation.implementation_id, arbitrary_id)
+            self.assertEqual(implementation.source_hash, source_hash)
+
+    def test_candidate_names_still_reject_case_insensitive_duplicates(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            write_reference(root)
+            parent = root / "operators" / "candidates" / OPERATOR_ID
+            first = parent / "Candidate"
+            second = parent / "candidate"
+            try:
+                for path in (first, second):
+                    path.mkdir(parents=True, exist_ok=False)
+                    (path / "implementation.py").write_text(
+                        "def operator(left, right):\n    return left + right\n"
+                    )
+            except FileExistsError:
+                self.skipTest("filesystem is case-insensitive")
             issues = FilesystemRegistry(root).discover().issues
-            self.assertIn("candidate.hash_mismatch", {issue.code for issue in issues})
+            self.assertIn("registry.case_collision", {issue.code for issue in issues})
 
     def test_case_insensitive_collisions_are_rejected(self):
         with tempfile.TemporaryDirectory() as temporary:
