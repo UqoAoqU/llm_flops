@@ -3,6 +3,7 @@
 from .controller import ControllerError, WorkerController, build_worker_request
 from .event_log import EventEmitter, EventLog
 from .isolation import IsolationError
+from .gpu_lock import GpuIdentity, GpuLock, GpuLockError, GpuLockTimeout, collect_gpu_metadata, resolve_gpu_identity
 from .protocol import (
     PROTOCOL_SCHEMA_VERSION,
     WORKER_REQUEST_SCHEMA_VERSION,
@@ -25,6 +26,11 @@ __all__ = [
     "EventLog",
     "EventName",
     "IsolationError",
+    "GpuIdentity",
+    "GpuLock",
+    "GpuLockError",
+    "GpuLockTimeout",
+    "collect_gpu_metadata",
     "ProtocolError",
     "StageTimeouts",
     "WorkerController",
@@ -35,4 +41,5 @@ __all__ = [
     "WorkerStage",
     "build_worker_request",
     "validate_event_sequence",
+    "resolve_gpu_identity",
 ]

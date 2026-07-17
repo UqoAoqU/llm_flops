@@ -1,9 +1,8 @@
 # Performance measurement
 
-Phase 8 adds staged latency measurement after the correctness gate. It records
-raw reference and candidate samples, but deliberately does **not** implement
-GPU locking, interleaved fairness, regression gates, speedup ranking, or
-cross-run comparison; those policies belong to Phase 9.
+Phase 9 adds correctness-gated fair measurement, physical-GPU locking,
+performance gates, and strict artifact comparison. Nsight/NVTX, profiler
+backends, operator migration, and multi-GPU scheduling remain excluded.
 
 ## CPU example
 
@@ -43,7 +42,7 @@ The canonical timer names are:
 
 Explicit `cuda_graph` does not silently fall back. Every measured role records
 `requested_timer`, `effective_timer`, and `fallback_reason`. Results using
-different effective timers are not directly comparable.
+different effective timers fail the formal performance gate.
 
 ## Stages and configuration
 
@@ -57,21 +56,42 @@ separate reference-prefixed preparation fields where applicable.
 
 Engine defaults are 5 warmup calls, 30 raw samples, and 20 inner iterations.
 Configuration resolves in this order: CLI override, suite value, operator
-manifest value, engine default. Relevant CLI options are `--timer`, `--warmup`,
-`--samples`, and `--inner-iterations`.
+manifest value, engine default. Relevant CLI options include `--timer`,
+`--warmup`, `--samples`, `--inner-iterations`, `--max-slowdown-pct`,
+`--min-speedup`, `--max-cv`, and `--max-memory-bytes`.
 
 ## Raw data and statistics
 
-`performance_samples.csv` schema v2 stores each reference/candidate sample
+After both roles complete independent first-call, warmup, and graph capture,
+steady samples follow fixed `R-C-C-R` order. `performance_samples.csv` schema v2 stores each reference/candidate sample
 separately, including `elapsed_ms`, `per_call_ms`, `inner_iterations`, timer
-provenance, and an order index. `results.csv` schema v2 stores the aggregate
+provenance, and a global order index. `results.csv` schema v3 stores the aggregate
 mean, median, min, max, p50, p90, p95, p99, population standard deviation, and
 coefficient of variation (CV) for both roles. Percentiles use linear Type-7
 interpolation.
 
-Fewer than five samples or CV above 0.1 marks a measurement `unstable`. That
-status is diagnostic in Phase 8; it is not a performance gate and does not
-create a ranking.
+Fewer than five samples or CV above the resolved threshold marks a measurement
+`unstable` and fails a formal performance request.
+
+## GPU lock, telemetry, gates, and comparison
+
+CUDA operators in `all` or `performance` mode acquire
+`.runtime/locks/<GPU UUID>.lock` before worker launch, including when using
+`wall_clock`. Lock metadata contains PID, run ID, UTC start, logical/visible
+device, and UUID. Only a definitely absent owner PID is reclaimed; malformed
+metadata, permission uncertainty, and possible PID reuse time out conservatively.
+
+GPU identity, driver/CUDA version, `CUDA_VISIBLE_DEVICES`, and best-effort
+other-compute-process state are recorded before sampling. Unknown telemetry is
+empty, never fake zero. Competing compute activity makes a result non-formal.
+Correctness failures normally produce no samples; `--perf-on-correctness-fail`
+keeps diagnostic samples permanently non-formal.
+
+Speedup is `reference_median/candidate_median`; zero or non-finite denominators
+remain empty. Use `bench compare --result EVAL --baseline-result BASE` or
+`bench compare --run RUN --baseline-run BASE_RUN`. Contract, case/seed,
+environment, and timer provenance must match; incompatibility exits 2 without
+calculating a misleading speedup.
 
 ## Theoretical cost model
 

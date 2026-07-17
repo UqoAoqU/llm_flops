@@ -9,6 +9,7 @@ from .evaluator import (
     PreparedPerformance,
 )
 from .statistics import SampleStatistics, compute_statistics, percentile
+from .gate import GateResult, PerformanceGateConfig, evaluate_performance_gate
 from .timers import (
     AutoTimer,
     CudaEventTimer,
@@ -30,10 +31,12 @@ __all__ = [
     "CudaEventTimer",
     "CudaGraphTimer",
     "GraphCaptureError",
+    "GateResult",
     "ImplementationMeasurement",
     "PerformanceConfig",
     "PerformanceEvaluator",
     "PerformanceResult",
+    "PerformanceGateConfig",
     "PreparedPerformance",
     "RawSample",
     "SampleStatistics",
@@ -46,6 +49,7 @@ __all__ = [
     "WallClockTimer",
     "compute_statistics",
     "evaluate_cost_model",
+    "evaluate_performance_gate",
     "percentile",
     "select_timer",
 ]

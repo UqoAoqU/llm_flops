@@ -47,6 +47,7 @@ class RawSample:
     inner_iterations: int
     elapsed_ms: float
     per_call_ms: float
+    order_index: int | None = None
 
     def __post_init__(self) -> None:
         if isinstance(self.sample_index, bool) or not isinstance(self.sample_index, int):
@@ -63,14 +64,23 @@ class RawSample:
                 raise TypeError(f"{name} must be a number")
             if not math.isfinite(float(value)) or float(value) < 0:
                 raise ValueError(f"{name} must be finite and non-negative")
+        if self.order_index is not None and (
+            isinstance(self.order_index, bool)
+            or not isinstance(self.order_index, int)
+            or self.order_index < 0
+        ):
+            raise ValueError("order_index must be a non-negative integer or None")
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        result = {
             "sample_index": self.sample_index,
             "inner_iterations": self.inner_iterations,
             "elapsed_ms": float(self.elapsed_ms),
             "per_call_ms": float(self.per_call_ms),
         }
+        if self.order_index is not None:
+            result["order_index"] = self.order_index
+        return result
 
 
 @dataclass(frozen=True)
@@ -196,6 +206,25 @@ class CudaEventTimer:
         return tuple(result)
 
 
+def _same_callable(
+    prepared: Callable[[], object] | None, current: Callable[[], object]
+) -> bool:
+    if prepared is current:
+        return True
+    if prepared is None:
+        return False
+    prepared_self = getattr(prepared, "__self__", None)
+    prepared_func = getattr(prepared, "__func__", None)
+    current_self = getattr(current, "__self__", None)
+    current_func = getattr(current, "__func__", None)
+    return (
+        prepared_self is not None
+        and prepared_func is not None
+        and current_self is prepared_self
+        and current_func is prepared_func
+    )
+
+
 class CudaGraphTimer:
     """Capture a fixed callable once, then time graph replays with events."""
 
@@ -210,7 +239,7 @@ class CudaGraphTimer:
         self._clock = clock
         self._selection = TimerSelection(requested_timer, "cuda_graph")
         self._graph: object | None = None
-        self._callable_identity: int | None = None
+        self._prepared_callable: Callable[[], object] | None = None
 
     @property
     def selection(self) -> TimerSelection:
@@ -237,13 +266,15 @@ class CudaGraphTimer:
         if not math.isfinite(elapsed_ms) or elapsed_ms < 0:
             raise GraphCaptureError("CUDA Graph capture produced an invalid duration")
         self._graph = graph
-        self._callable_identity = id(fn)
+        # Keep the callable alive: comparing only id(fn) can both reject fresh
+        # bound-method wrappers and accept an unrelated object after id reuse.
+        self._prepared_callable = fn
         # Keep the module alive for injected/fake runtimes too.
         self._torch = torch_module
         return elapsed_ms
 
     def sample(self, fn: Callable[[], object], config: TimerConfig) -> tuple[RawSample, ...]:
-        if self._graph is None or self._callable_identity != id(fn):
+        if self._graph is None or not _same_callable(self._prepared_callable, fn):
             raise TimerError("CudaGraphTimer.sample requires prepare with the same callable")
         _, cuda = _torch_cuda(self._torch)
         result: list[RawSample] = []

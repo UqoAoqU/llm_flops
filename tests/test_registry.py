@@ -4,6 +4,10 @@ from dataclasses import FrozenInstanceError
 from pathlib import Path
 
 from benchmark_engine.registry import FilesystemRegistry
+from benchmark_engine.registry.validation import (
+    ManifestValidationError,
+    parse_operator_manifest,
+)
 
 from tests.registry_fixtures import (
     OPERATOR_ID,
@@ -14,6 +18,59 @@ from tests.registry_fixtures import (
 
 
 class FilesystemRegistryTest(unittest.TestCase):
+    def test_performance_optional_fields_resolve_defaults_and_explicit_values(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            manifest = write_reference(Path(temporary)) / "operator.yaml"
+            performance = parse_operator_manifest(manifest).performance
+            self.assertEqual(performance.max_cv, 0.1)
+            self.assertIsNone(performance.min_speedup)
+            self.assertIsNone(performance.max_candidate_median_ms)
+            self.assertIsNone(performance.max_memory_bytes)
+
+            manifest.write_text(
+                manifest.read_text(encoding="utf-8").replace(
+                    "  regression_threshold_pct: 5.0\n",
+                    "  regression_threshold_pct: 5.0\n"
+                    "  min_speedup: 1.2\n"
+                    "  max_candidate_median_ms: 3.5\n"
+                    "  max_cv: 0.025\n"
+                    "  max_memory_bytes: 4096\n",
+                ),
+                encoding="utf-8",
+            )
+            performance = parse_operator_manifest(manifest).performance
+            self.assertEqual(performance.min_speedup, 1.2)
+            self.assertEqual(performance.max_candidate_median_ms, 3.5)
+            self.assertEqual(performance.max_cv, 0.025)
+            self.assertEqual(performance.max_memory_bytes, 4096)
+
+    def test_performance_max_cv_explicit_null_disables_gate(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            manifest = write_reference(Path(temporary)) / "operator.yaml"
+            manifest.write_text(
+                manifest.read_text(encoding="utf-8").replace(
+                    "  regression_threshold_pct: 5.0\n",
+                    "  regression_threshold_pct: 5.0\n  max_cv: null\n",
+                ),
+                encoding="utf-8",
+            )
+            self.assertIsNone(parse_operator_manifest(manifest).performance.max_cv)
+
+    def test_performance_max_cv_rejects_invalid_values(self):
+        for value in ("not-a-number", "-0.1", ".nan", ".inf"):
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as temporary:
+                manifest = write_reference(Path(temporary)) / "operator.yaml"
+                manifest.write_text(
+                    manifest.read_text(encoding="utf-8").replace(
+                        "  regression_threshold_pct: 5.0\n",
+                        f"  regression_threshold_pct: 5.0\n  max_cv: {value}\n",
+                    ),
+                    encoding="utf-8",
+                )
+                with self.assertRaises(ManifestValidationError) as raised:
+                    parse_operator_manifest(manifest)
+                self.assertEqual(raised.exception.field, "performance.max_cv")
+
     def test_valid_reference_and_two_candidates_are_immutable_and_sorted(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

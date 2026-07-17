@@ -1,5 +1,11 @@
 # Architecture
 
+Phase 9 keeps scheduling in the Controller: CUDA manifests acquire a UUID-keyed
+cross-process lock before worker launch. The Worker independently prepares both
+implementations and emits fixed `R-C-C-R` raw samples; the Controller validates
+sample indices and recomputes the trusted performance gate before writing the
+mirrored evaluation. Compare and summarize are read-only artifact consumers.
+
 Phase 8 lifecycle: Registry → runtime environment identity → deterministic plan
 → ArtifactWriter → isolated case worker → in-worker correctness gate → staged
 performance evaluator → controller-only CSV projection → completion or resume.

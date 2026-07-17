@@ -27,6 +27,38 @@ class Spec:
 
 
 class PerformanceEvaluatorCpuTests(unittest.TestCase):
+    def test_candidate_peak_memory_and_optional_workspace_are_outside_timing(self):
+        class WorkspaceSpec(Spec):
+            def workspace_bytes(self, case): return 4096
+        resets = []
+        reads = iter(((100, 200), (150, 250)))
+        evaluator = PerformanceEvaluator(
+            clock=StepClock(), synchronizer=lambda output, inputs: None,
+            reset_peak_memory=lambda: resets.append(True) or True,
+            read_peak_memory=lambda: next(reads),
+        )
+        result = evaluator.evaluate(
+            spec=WorkspaceSpec(), reference=lambda a, b: a,
+            candidate=lambda a, b: a, case=CaseSpec("case", {}, 0, frozenset()),
+            config=PerformanceConfig(requested_timer="wall_clock", warmup=0,
+                                     samples=2, inner_iterations=1,
+                                     minimum_stable_samples=2, maximum_cv=1),
+            cuda_devices=("cuda:0",),
+        )
+        self.assertEqual(len(resets), 2)
+        self.assertEqual(result.peak_memory_allocated_bytes, 150)
+        self.assertEqual(result.peak_memory_reserved_bytes, 250)
+        self.assertEqual(result.workspace_bytes, 4096)
+
+    def test_unknown_memory_is_none_not_zero(self):
+        result = PerformanceEvaluator(clock=StepClock(), synchronizer=lambda o, i: None).evaluate(
+            spec=Spec(), reference=lambda a, b: a, candidate=lambda a, b: a,
+            case=CaseSpec("case", {}, 0, frozenset()),
+            config=PerformanceConfig(requested_timer="wall_clock", warmup=0,
+                                     samples=1, inner_iterations=1),
+        )
+        self.assertIsNone(result.peak_memory_allocated_bytes)
+        self.assertIsNone(result.peak_memory_reserved_bytes)
     def test_first_warmup_and_sampling_are_separate_for_both_roles(self):
         calls = {"reference": 0, "candidate": 0}
 

@@ -25,7 +25,8 @@ from .registry import (
     selected_registry_issues,
 )
 from .selectors import Selectors
-from .reporting import ArtifactError, ResumeMismatchError, summarize_evaluation
+from .reporting import (ArtifactError, ResumeMismatchError, summarize_evaluation,
+                        CompareCompatibilityError, compare_artifacts)
 from .reporting.csv_writer import CsvContractError
 from .ids import evaluation_result_path
 
@@ -97,6 +98,15 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument(
         "--inner-iterations", type=int, help="calls represented by each raw sample"
     )
+    run_parser.add_argument("--perf-on-correctness-fail", action="store_true", default=None,
+                            help="measure failed candidates as permanently non-formal")
+    run_parser.add_argument("--max-slowdown-pct", type=float)
+    run_parser.add_argument("--min-speedup", type=float)
+    run_parser.add_argument("--max-candidate-median-ms", type=float)
+    run_parser.add_argument("--max-cv", type=float)
+    run_parser.add_argument("--max-memory-bytes", type=int)
+    run_parser.add_argument("--unsupported-policy", choices=("fail", "allow"))
+    run_parser.add_argument("--gpu-lock-timeout-s", type=float)
 
     summary_parser = commands.add_parser(
         "summarize", help="summarize existing artifacts without executing code"
@@ -106,6 +116,13 @@ def build_parser() -> argparse.ArgumentParser:
     summary_parser.add_argument("--candidate")
     summary_parser.add_argument("--evaluation")
     summary_parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
+    compare_parser = commands.add_parser("compare", help="compare compatible performance artifacts")
+    current = compare_parser.add_mutually_exclusive_group(required=True)
+    current.add_argument("--result", metavar="EVALUATION")
+    current.add_argument("--run", metavar="RUN_ID")
+    compare_parser.add_argument("--baseline-result", metavar="EVALUATION")
+    compare_parser.add_argument("--baseline-run", metavar="RUN_ID")
+    compare_parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     return parser
 
 
@@ -248,6 +265,28 @@ def main(
             print(f"summary error: {error}", file=sys.stderr)
             return 3 if Path(target).exists() else 2
         return 0
+    if arguments.command == "compare":
+        run_mode = arguments.run is not None
+        if run_mode != (arguments.baseline_run is not None):
+            print("compare requires --run with --baseline-run", file=sys.stderr)
+            return 2
+        if not run_mode and arguments.baseline_result is None:
+            print("compare requires --result with --baseline-result", file=sys.stderr)
+            return 2
+        if arguments.baseline_run is not None and arguments.baseline_result is not None:
+            print("compare baseline forms are mutually exclusive", file=sys.stderr)
+            return 2
+        output_root = arguments.output_root
+        if not output_root.is_absolute(): output_root = root / output_root
+        try:
+            print(compare_artifacts(output_root,
+                arguments.run if run_mode else arguments.result,
+                arguments.baseline_run if run_mode else arguments.baseline_result,
+                run=run_mode), end="")
+        except (CompareCompatibilityError, CsvContractError, OSError, ValueError) as error:
+            print(f"compare error: {error}", file=sys.stderr)
+            return 2
+        return 0
     if arguments.command == "run":
         output_root = arguments.output_root
         if not output_root.is_absolute():
@@ -275,6 +314,14 @@ def main(
                     performance_warmup=arguments.warmup,
                     performance_samples=arguments.samples,
                     performance_inner_iterations=arguments.inner_iterations,
+                    performance_max_slowdown_pct=arguments.max_slowdown_pct,
+                    perf_on_correctness_fail=arguments.perf_on_correctness_fail,
+                    performance_min_speedup=arguments.min_speedup,
+                    performance_max_candidate_median_ms=arguments.max_candidate_median_ms,
+                    performance_max_cv=arguments.max_cv,
+                    performance_max_memory_bytes=arguments.max_memory_bytes,
+                    performance_unsupported_policy=arguments.unsupported_policy,
+                    gpu_lock_timeout_s=arguments.gpu_lock_timeout_s,
                 )
                 print(json.dumps(plan.to_dict(), indent=2, sort_keys=True))
                 return 0
@@ -294,6 +341,14 @@ def main(
                         arguments.warmup is not None,
                         arguments.samples is not None,
                         arguments.inner_iterations is not None,
+                        arguments.perf_on_correctness_fail is not None,
+                        arguments.max_slowdown_pct is not None,
+                        arguments.min_speedup is not None,
+                        arguments.max_candidate_median_ms is not None,
+                        arguments.max_cv is not None,
+                        arguments.max_memory_bytes is not None,
+                        arguments.unsupported_policy is not None,
+                        arguments.gpu_lock_timeout_s is not None,
                     )
                 ):
                     raise ValueError("--resume cannot be combined with selectors or identity overrides")
@@ -313,6 +368,14 @@ def main(
                     performance_warmup=arguments.warmup,
                     performance_samples=arguments.samples,
                     performance_inner_iterations=arguments.inner_iterations,
+                    performance_max_slowdown_pct=arguments.max_slowdown_pct,
+                    perf_on_correctness_fail=arguments.perf_on_correctness_fail,
+                    performance_min_speedup=arguments.min_speedup,
+                    performance_max_candidate_median_ms=arguments.max_candidate_median_ms,
+                    performance_max_cv=arguments.max_cv,
+                    performance_max_memory_bytes=arguments.max_memory_bytes,
+                    performance_unsupported_policy=arguments.unsupported_policy,
+                    gpu_lock_timeout_s=arguments.gpu_lock_timeout_s,
                 )
             outcome = execute_plan(
                 plan,

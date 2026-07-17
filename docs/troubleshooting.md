@@ -1,5 +1,12 @@
 # Troubleshooting managed workers
 
+GPU lock timeouts identify `.runtime/locks/<GPU UUID>.lock` and its owner.
+Never delete a lock whose PID may still exist; malformed or permission-protected
+metadata times out conservatively. Non-formal performance commonly means too
+few samples/high CV, role timer mismatch, opted-in correctness failure, or
+another compute process detected before sampling. Such raw samples are retained
+but never ranked.
+
 - Import failures: inspect `logs/stderr.log` and `diagnostics/*-import.txt`.
 - Candidate exceptions: correctness `error` plus a JSON diagnostic.
 - Hard timeout: the whole worker process group is terminated; later cases run by default.
@@ -8,8 +15,8 @@
 - A correctness-only run records `performance_status=skipped` with
   `skip_reason=correctness_only_mode`; this is not a performance pass.
 
-Historical note: Phase 5 introduced import/build isolation. The current Phase 7
-correctness workflow was extended in Phase 8 with correctness-gated performance
+Historical note: Phase 5 introduced import/build isolation. The correctness
+workflow was extended through Phase 9 with gated fair performance
 measurement and explicit warmup/sampling stages.
 
 ## A worker times out during import or build

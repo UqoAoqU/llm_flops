@@ -21,11 +21,14 @@ from benchmark_engine.correctness import CorrectnessEvaluator
 from benchmark_engine.performance import (
     PerformanceConfig,
     PerformanceEvaluator,
+    PerformanceGateConfig,
+    evaluate_performance_gate,
     TimerUnsupportedError,
 )
 from benchmark_engine.models import CaseSpec
 
 from .event_log import EventEmitter, EventLog
+from .gpu_lock import collect_gpu_metadata, resolve_gpu_identity
 from .isolation import ensure_beneath, validated_artifact_root, validated_root
 from .protocol import (
     EventName,
@@ -427,7 +430,7 @@ def execute(
                 stage_elapsed[WorkerStage.CORRECTNESS.value] = time.monotonic() - stage_started
                 if not formal_spec:
                     _skip_from(emitter, 3, "Phase-5 import/build-only fixture")
-                elif result_payload is None or result_payload.get("status") != "pass":
+                elif (result_payload is None or result_payload.get("status") != "pass") and not request.resolved_config.perf_on_correctness_fail:
                     assert result_payload is not None
                     result_payload["performance"] = {
                         "status": "skipped",
@@ -452,6 +455,9 @@ def execute(
                             warmup=request.resolved_config.performance_warmup,
                             samples=request.resolved_config.performance_samples,
                             inner_iterations=request.resolved_config.performance_inner_iterations,
+                            maximum_cv=(request.resolved_config.performance_max_cv
+                                        if request.resolved_config.performance_max_cv is not None
+                                        else sys.float_info.max),
                         )
                         prepared = evaluator.prepare(
                             spec=runtime_spec,
@@ -506,6 +512,22 @@ def execute(
                             WorkerStage.WARMUP,
                             "success",
                         )
+                        gpu_runtime = None
+                        if request.cuda_devices:
+                            try:
+                                gpu_runtime = collect_gpu_metadata(
+                                    resolve_gpu_identity(0, allow_torch_fallback=True)
+                                )
+                            except BaseException as telemetry_error:
+                                gpu_runtime = {
+                                    "logical_device": request.cuda_devices[0],
+                                    "visible_device": None, "gpu_uuid": None,
+                                    "gpu_name": None,
+                                    "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
+                                    "driver_version": None, "cuda_version": None,
+                                    "other_compute_processes_detected": None,
+                                    "telemetry_error": f"{type(telemetry_error).__name__}: {telemetry_error}"[:512],
+                                }
                         emitter.emit(
                             EventName.SAMPLING_STARTED,
                             WorkerStage.SAMPLING,
@@ -543,7 +565,31 @@ def execute(
                             stage_elapsed[WorkerStage.SAMPLING.value] = (
                                 time.monotonic() - stage_started
                             )
-                            result_payload["performance"] = performance.to_dict()
+                            performance_payload = performance.to_dict()
+                            if gpu_runtime is not None:
+                                performance_payload["gpu_runtime"] = gpu_runtime
+                                if gpu_runtime.get("other_compute_processes_detected") is True:
+                                    performance_payload["formal"] = False
+                                    performance_payload["non_formal_reason"] = "other_compute_process_detected"
+                            correctness_pass = result_payload.get("status") == "pass"
+                            if not correctness_pass:
+                                performance_payload["formal"] = False
+                                performance_payload["non_formal_reason"] = "correctness_failed_opt_in"
+                            gate = evaluate_performance_gate(
+                                performance_payload,
+                                PerformanceGateConfig(
+                                    max_slowdown_pct=request.resolved_config.performance_regression_threshold_pct,
+                                    min_speedup=request.resolved_config.performance_min_speedup,
+                                    max_candidate_median_ms=request.resolved_config.performance_max_candidate_median_ms,
+                                    max_cv=request.resolved_config.performance_max_cv,
+                                    max_memory_bytes=request.resolved_config.performance_max_memory_bytes,
+                                    unsupported_policy=request.resolved_config.performance_unsupported_policy,
+                                ),
+                                correctness_pass=correctness_pass,
+                                perf_on_correctness_fail=not correctness_pass,
+                            )
+                            performance_payload["gate"] = gate.to_dict()
+                            result_payload["performance"] = performance_payload
                             emitter.emit(
                                 EventName.SAMPLING_FINISHED,
                                 WorkerStage.SAMPLING,

@@ -72,6 +72,8 @@ _PERFORMANCE_FIELDS = frozenset(
         "inner_iterations",
         "timeout_s",
         "regression_threshold_pct",
+        "perf_on_correctness_fail", "min_speedup", "max_candidate_median_ms",
+        "max_cv", "max_memory_bytes", "unsupported_policy", "gpu_lock_timeout_s",
     }
 )
 _BUILD_FIELDS = frozenset({"command", "timeout_s"})
@@ -283,6 +285,15 @@ def _performance(value: object, path: Path) -> PerformanceManifest:
             "performance.graph_mode",
             "must be auto, enabled, or disabled",
         )
+    unsupported_policy = _string(data.get("unsupported_policy", defaults.unsupported_policy), path, "performance.unsupported_policy")
+    if unsupported_policy not in {"fail", "allow"}:
+        _fail("manifest.value", path, "performance.unsupported_policy", "must be fail or allow")
+    min_speedup = data.get("min_speedup", defaults.min_speedup)
+    max_candidate_median_ms = data.get(
+        "max_candidate_median_ms", defaults.max_candidate_median_ms
+    )
+    max_cv = data.get("max_cv", defaults.max_cv)
+    max_memory_bytes = data.get("max_memory_bytes", defaults.max_memory_bytes)
     return PerformanceManifest(
         timer=timer,
         graph_mode=graph_mode,
@@ -318,6 +329,13 @@ def _performance(value: object, path: Path) -> PerformanceManifest:
             "performance.regression_threshold_pct",
             nonnegative=True,
         ),
+        perf_on_correctness_fail=_boolean(data.get("perf_on_correctness_fail", defaults.perf_on_correctness_fail), path, "performance.perf_on_correctness_fail"),
+        min_speedup=(None if min_speedup is None else _number(min_speedup, path, "performance.min_speedup", nonnegative=True)),
+        max_candidate_median_ms=(None if max_candidate_median_ms is None else _number(max_candidate_median_ms, path, "performance.max_candidate_median_ms", nonnegative=True)),
+        max_cv=(None if max_cv is None else _number(max_cv, path, "performance.max_cv", nonnegative=True)),
+        max_memory_bytes=(None if max_memory_bytes is None else _integer(max_memory_bytes, path, "performance.max_memory_bytes", nonnegative=True)),
+        unsupported_policy=unsupported_policy,
+        gpu_lock_timeout_s=_number(data.get("gpu_lock_timeout_s", defaults.gpu_lock_timeout_s), path, "performance.gpu_lock_timeout_s", nonnegative=True),
     )
 
 

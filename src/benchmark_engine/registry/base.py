@@ -53,6 +53,13 @@ class PerformanceManifest:
     inner_iterations: int = 20
     timeout_s: int = 600
     regression_threshold_pct: float = 5.0
+    perf_on_correctness_fail: bool = False
+    min_speedup: float | None = None
+    max_candidate_median_ms: float | None = None
+    max_cv: float | None = 0.1
+    max_memory_bytes: int | None = None
+    unsupported_policy: str = "fail"
+    gpu_lock_timeout_s: float = 600.0
 
 
 @dataclass(frozen=True)

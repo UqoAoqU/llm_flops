@@ -32,6 +32,8 @@ from .reporting.csv_writer import (
 from .selectors import Selectors, select_cases
 from .suite import load_suite
 from .ids import generate_result_id
+from .performance import PerformanceGateConfig, evaluate_performance_gate
+from .execution.gpu_lock import GpuLock, resolve_gpu_identity
 
 
 PERFORMANCE_SKIP_REASON = "performance_not_implemented"
@@ -81,6 +83,14 @@ def build_dry_run_plan(
     performance_warmup: int | None = None,
     performance_samples: int | None = None,
     performance_inner_iterations: int | None = None,
+    performance_max_slowdown_pct: float | None = None,
+    perf_on_correctness_fail: bool | None = None,
+    performance_min_speedup: float | None = None,
+    performance_max_candidate_median_ms: float | None = None,
+    performance_max_cv: float | None = None,
+    performance_max_memory_bytes: int | None = None,
+    performance_unsupported_policy: str | None = None,
+    gpu_lock_timeout_s: float | None = None,
 ):
     """Build an import-free-of-candidates, artifact-free plan."""
 
@@ -103,6 +113,14 @@ def build_dry_run_plan(
         performance_warmup=performance_warmup,
         performance_samples=performance_samples,
         performance_inner_iterations=performance_inner_iterations,
+        performance_max_slowdown_pct=performance_max_slowdown_pct,
+        perf_on_correctness_fail=perf_on_correctness_fail,
+        performance_min_speedup=performance_min_speedup,
+        performance_max_candidate_median_ms=performance_max_candidate_median_ms,
+        performance_max_cv=performance_max_cv,
+        performance_max_memory_bytes=performance_max_memory_bytes,
+        performance_unsupported_policy=performance_unsupported_policy,
+        gpu_lock_timeout_s=gpu_lock_timeout_s,
     )
 
 
@@ -129,6 +147,14 @@ def build_execution_plan(
     performance_warmup: int | None = None,
     performance_samples: int | None = None,
     performance_inner_iterations: int | None = None,
+    performance_max_slowdown_pct: float | None = None,
+    perf_on_correctness_fail: bool | None = None,
+    performance_min_speedup: float | None = None,
+    performance_max_candidate_median_ms: float | None = None,
+    performance_max_cv: float | None = None,
+    performance_max_memory_bytes: int | None = None,
+    performance_unsupported_policy: str | None = None,
+    gpu_lock_timeout_s: float | None = None,
 ) -> tuple[EvaluationPlan, RegistrySnapshot, Mapping[str, object]]:
     root = Path(repository_root).resolve()
     suite = _suite(root, suite_id)
@@ -150,6 +176,14 @@ def build_execution_plan(
         performance_warmup=performance_warmup,
         performance_samples=performance_samples,
         performance_inner_iterations=performance_inner_iterations,
+        performance_max_slowdown_pct=performance_max_slowdown_pct,
+        perf_on_correctness_fail=perf_on_correctness_fail,
+        performance_min_speedup=performance_min_speedup,
+        performance_max_candidate_median_ms=performance_max_candidate_median_ms,
+        performance_max_cv=performance_max_cv,
+        performance_max_memory_bytes=performance_max_memory_bytes,
+        performance_unsupported_policy=performance_unsupported_policy,
+        gpu_lock_timeout_s=gpu_lock_timeout_s,
     )
     return replace(plan, fingerprint_kind="runtime"), snapshot, environment
 
@@ -327,6 +361,7 @@ def _performance_status(raw: str) -> PerformanceStatus:
             "timeout": PerformanceStatus.TIMEOUT,
             "oom": PerformanceStatus.OOM,
             "crashed": PerformanceStatus.CRASHED,
+            "failed": PerformanceStatus.FAILED,
         }[raw]
     except KeyError as error:
         raise ValueError(f"unknown performance status {raw!r}") from error
@@ -531,11 +566,10 @@ def _append_result(
     # The trusted correctness gate dominates every worker-provided performance
     # field.  A malformed/malicious candidate cannot publish samples for a
     # failed correctness result.
-    raw_performance = (
-        payload.get("performance")
-        if correctness is CorrectnessStatus.PASSED
-        else {"status": "skipped", "reason": "correctness_gate_failed"}
-    )
+    trusted_opt_in = job.resolved_config.perf_on_correctness_fail
+    raw_performance = payload.get("performance") if (
+        correctness is CorrectnessStatus.PASSED or trusted_opt_in
+    ) else {"status": "skipped", "reason": "correctness_gate_failed"}
     if not isinstance(raw_performance, Mapping):
         return False, True
     raw_performance_status = raw_performance.get("status")
@@ -567,11 +601,11 @@ def _append_result(
     candidate_statistics = _statistics(candidate_measurement)
     sample_rows: list[dict[str, object]] = []
     if performance in {PerformanceStatus.PASSED, PerformanceStatus.UNSTABLE}:
-        for role_index, (role, measurement, selection) in enumerate(
-            (
-                ("reference", reference_measurement, reference_selection),
-                ("candidate", candidate_measurement, candidate_selection),
-            )
+        role_indices: dict[str, list[int]] = {}
+        all_orders: list[int] = []
+        for role, measurement, selection in (
+            ("reference", reference_measurement, reference_selection),
+            ("candidate", candidate_measurement, candidate_selection),
         ):
             raw_samples = measurement.get("samples")
             if not isinstance(raw_samples, list) or not raw_samples:
@@ -583,12 +617,18 @@ def _append_result(
                 effective_timer, str
             ):
                 return False, True
+            role_indices[role] = []
             for raw_sample in raw_samples:
                 if not isinstance(raw_sample, Mapping):
                     return False, True
                 sample_index = raw_sample.get("sample_index")
                 if isinstance(sample_index, bool) or not isinstance(sample_index, int):
                     return False, True
+                order_index = raw_sample.get("order_index")
+                if isinstance(order_index, bool) or not isinstance(order_index, int):
+                    return False, True
+                role_indices[role].append(sample_index)
+                all_orders.append(order_index)
                 sample_rows.append(
                     {
                         "result_id": job.result_id,
@@ -597,12 +637,19 @@ def _append_result(
                         "inner_iterations": raw_sample.get("inner_iterations"),
                         "elapsed_ms": raw_sample.get("elapsed_ms"),
                         "per_call_ms": raw_sample.get("per_call_ms"),
-                        "order_index": role_index * len(raw_samples) + sample_index,
+                        "order_index": order_index,
                         "requested_timer": requested_timer,
                         "effective_timer": effective_timer,
                         "fallback_reason": fallback_reason,
                     }
                 )
+        counts = {role: len(indices) for role, indices in role_indices.items()}
+        if set(counts) != {"reference", "candidate"} or len(set(counts.values())) != 1:
+            return False, True
+        if any(indices != list(range(len(indices))) for indices in role_indices.values()):
+            return False, True
+        if sorted(all_orders) != list(range(len(all_orders))):
+            return False, True
     skip_reason = (
         str(raw_performance.get("reason") or "performance_skipped")
         if performance is PerformanceStatus.SKIPPED
@@ -612,7 +659,35 @@ def _append_result(
     cost = cost if isinstance(cost, Mapping) else {}
     gpu = environment_snapshot.get("gpu")
     gpu = gpu if isinstance(gpu, Mapping) else {}
+    gpu_runtime = raw_performance.get("gpu_runtime")
+    gpu_runtime = gpu_runtime if isinstance(gpu_runtime, Mapping) else {}
+    gate = evaluate_performance_gate(
+        raw_performance,
+        PerformanceGateConfig(
+            max_slowdown_pct=job.resolved_config.performance_regression_threshold_pct,
+            min_speedup=job.resolved_config.performance_min_speedup,
+            max_candidate_median_ms=job.resolved_config.performance_max_candidate_median_ms,
+            max_cv=job.resolved_config.performance_max_cv,
+            max_memory_bytes=job.resolved_config.performance_max_memory_bytes,
+            unsupported_policy=job.resolved_config.performance_unsupported_policy,
+        ),
+        correctness_pass=correctness is CorrectnessStatus.PASSED,
+        perf_on_correctness_fail=correctness is not CorrectnessStatus.PASSED and trusted_opt_in,
+    )
     overall = _overall_status(correctness, performance)
+    if correctness is CorrectnessStatus.PASSED and job.mode != "correctness":
+        if (
+            performance in {PerformanceStatus.PASSED, PerformanceStatus.UNSTABLE}
+            and gate.status == "failed"
+        ):
+            overall = ResultStatus.FAILED
+        elif (
+            performance is PerformanceStatus.UNSUPPORTED
+            and gate.status == "passed"
+        ):
+            # unsupported_policy=allow is a successful gate but remains
+            # visibly unsupported and permanently ineligible for ranking.
+            overall = ResultStatus.PASSED
     row = {
         "run_id": job.identity.run_id,
         "evaluation_id": job.identity.evaluation_id,
@@ -629,6 +704,13 @@ def _append_result(
         "environment_fingerprint": plan.environment_fingerprint,
         "device": _manifest_device(manifest.device_types),
         "gpu_name": gpu.get("name"),
+        "gpu_uuid": gpu_runtime.get("gpu_uuid"),
+        "logical_device": gpu_runtime.get("logical_device"),
+        "visible_device": gpu_runtime.get("visible_device"),
+        "cuda_visible_devices": gpu_runtime.get("cuda_visible_devices"),
+        "driver_version": gpu_runtime.get("driver_version"),
+        "other_compute_processes_detected": gpu_runtime.get("other_compute_processes_detected"),
+        "telemetry_error": gpu_runtime.get("telemetry_error"),
         "cuda_version": environment_snapshot.get("cuda"),
         "torch_version": _environment_package_version(environment_snapshot, "torch"),
         "case_id": job.case.case_id,
@@ -653,6 +735,9 @@ def _append_result(
         "requested_timer": candidate_selection.get("requested_timer"),
         "effective_timer": candidate_selection.get("effective_timer"),
         "timer_fallback_reason": candidate_selection.get("fallback_reason"),
+        "reference_requested_timer": reference_selection.get("requested_timer"),
+        "reference_effective_timer": reference_selection.get("effective_timer"),
+        "reference_timer_fallback_reason": reference_selection.get("fallback_reason"),
         "import_ms": response.stage_elapsed_s.get("import", 0.0) * 1000.0,
         "build_ms": response.stage_elapsed_s.get("build", 0.0) * 1000.0,
         "first_call_ms": candidate_measurement.get("first_call_ms"),
@@ -686,12 +771,29 @@ def _append_result(
         "candidate_cv": candidate_statistics.get("cv"),
         "candidate_unstable": candidate_statistics.get("unstable"),
         "instability_reason": candidate_statistics.get("instability_reason"),
+        "speedup": raw_performance.get("speedup"),
+        "slowdown_pct": raw_performance.get("slowdown_pct"),
+        "latency_delta_ms": raw_performance.get("latency_delta_ms"),
+        "performance_formal": gate.formal,
+        "ranking_eligible": gate.ranking_eligible,
+        "performance_gate_status": gate.status,
+        "performance_gate_reasons": json.dumps(gate.reasons),
+        "perf_on_correctness_fail": trusted_opt_in,
+        "gate_max_slowdown_pct": job.resolved_config.performance_regression_threshold_pct,
+        "gate_min_speedup": job.resolved_config.performance_min_speedup,
+        "gate_max_candidate_median_ms": job.resolved_config.performance_max_candidate_median_ms,
+        "gate_max_cv": job.resolved_config.performance_max_cv,
+        "gate_max_memory_bytes": job.resolved_config.performance_max_memory_bytes,
+        "gate_unsupported_policy": job.resolved_config.performance_unsupported_policy,
         "tflops": cost.get("tflops"),
         "effective_bandwidth_gbps": cost.get("effective_bandwidth_gbps"),
         "flops": cost.get("flops"),
         "estimated_bytes": cost.get("estimated_bytes"),
         "arithmetic_intensity": cost.get("arithmetic_intensity"),
         "throughput": cost.get("throughput"),
+        "peak_memory_bytes": raw_performance.get("peak_memory_allocated_bytes"),
+        "peak_reserved_memory_bytes": raw_performance.get("peak_memory_reserved_bytes"),
+        "workspace_bytes": raw_performance.get("workspace_bytes"),
         "error_type": error_type,
         "error_message": error_message,
         "diagnostic_path": response.diagnostic_path,
@@ -797,13 +899,27 @@ def execute_plan(
             performance_s=float(job.resolved_config.performance_timeout_s),
         )
         try:
-            response = worker_controller.run(
-                job,
-                spec_entrypoint=metadata.entrypoint,
-                build_argv=() if build is None else build.command,
-                cuda_devices=_manifest_cuda_devices(operator_manifest.device_types),
-                timeouts=limits,
-            )
+            cuda_devices = _manifest_cuda_devices(operator_manifest.device_types)
+            gpu_lock = None
+            if cuda_devices and job.mode in {"all", "performance"}:
+                identity = resolve_gpu_identity(0, allow_torch_fallback=False)
+                repository_root = job.reference.root.parents[2]
+                gpu_lock = GpuLock(
+                    repository_root / ".runtime" / "locks", identity,
+                    run_id=job.identity.run_id,
+                    timeout_s=job.resolved_config.gpu_lock_timeout_s,
+                ).acquire()
+            try:
+                response = worker_controller.run(
+                    job,
+                    spec_entrypoint=metadata.entrypoint,
+                    build_argv=() if build is None else build.command,
+                    cuda_devices=cuda_devices,
+                    timeouts=limits,
+                )
+            finally:
+                if gpu_lock is not None:
+                    gpu_lock.release()
         except KeyboardInterrupt:
             interrupted = True
             stopped = True

@@ -6,6 +6,8 @@ bench run --mode correctness --operator OP --candidate CANDIDATE [--case CASE] [
 bench run --resume RUN_ID
 bench summarize PATH
 bench summarize --operator OP --candidate CANDIDATE --evaluation EVALUATION
+bench compare --result EVALUATION --baseline-result BASELINE
+bench compare --run RUN_ID --baseline-run BASELINE_RUN_ID
 ```
 
 Default execution continues after gate failures. `--fail-fast` stops remaining
@@ -54,3 +56,8 @@ fingerprint and durable artifacts.
 Artifact writers and the managed worker back the correctness CLI. Their
 state and compatibility rules are documented in [Result layout](result-layout.md)
 and [CSV schemas](csv-schema.md); no CLI command bypasses those rules.
+
+Performance threshold flags are `--max-slowdown-pct`, `--min-speedup`,
+`--max-candidate-median-ms`, `--max-cv`, `--max-memory-bytes`, and
+`--unsupported-policy fail|allow`. `--perf-on-correctness-fail` retains only
+non-formal diagnostic samples. CLI overrides suite, operator, then defaults.

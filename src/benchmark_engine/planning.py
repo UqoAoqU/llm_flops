@@ -57,6 +57,14 @@ class PlanBuilder:
         performance_warmup: int | None = None,
         performance_samples: int | None = None,
         performance_inner_iterations: int | None = None,
+        performance_max_slowdown_pct: float | None = None,
+        perf_on_correctness_fail: bool | None = None,
+        performance_min_speedup: float | None = None,
+        performance_max_candidate_median_ms: float | None = None,
+        performance_max_cv: float | None = None,
+        performance_max_memory_bytes: int | None = None,
+        performance_unsupported_policy: str | None = None,
+        gpu_lock_timeout_s: float | None = None,
     ) -> EvaluationPlan:
         operator_ids = select_operators(snapshot, suite, selectors)
         issues = selected_registry_issues(
@@ -107,7 +115,21 @@ class PlanBuilder:
                 performance_warmup=performance_warmup,
                 performance_samples=performance_samples,
                 performance_inner_iterations=performance_inner_iterations,
+                performance_max_slowdown_pct=performance_max_slowdown_pct,
+                perf_on_correctness_fail=perf_on_correctness_fail,
+                performance_min_speedup=performance_min_speedup,
+                performance_max_candidate_median_ms=performance_max_candidate_median_ms,
+                performance_max_cv=performance_max_cv,
+                performance_max_memory_bytes=performance_max_memory_bytes,
+                performance_unsupported_policy=performance_unsupported_policy,
+                gpu_lock_timeout_s=gpu_lock_timeout_s,
             )
+            has_cuda = any(device.lower().startswith("cuda") for device in snapshot.operator_manifests[operator_id].device_types)
+            if resolved.mode in {"all", "performance"} and not has_cuda and resolved.performance_timer != "wall_clock":
+                raise PlanningError(
+                    f"CPU-only operator {operator_id!r} requires wall_clock; "
+                    f"{resolved.performance_timer!r} CUDA timing would be misleading"
+                )
             selected_cases = select_cases(
                 load_operator_cases(snapshot, operator_id), suite, selectors
             )

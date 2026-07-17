@@ -53,21 +53,35 @@ def summarize_evaluation(path: Path) -> str:
     if not rows:
         raise ValueError(f"results table contains no rows: {target}")
     counts: dict[str, int] = {}
+    performance_counts: dict[str, int] = {}
+    gate_counts: dict[str, int] = {}
     for row in rows:
         status = row["correctness_status"]
         counts[status] = counts.get(status, 0) + 1
+        performance = row["performance_status"]
+        performance_counts[performance] = performance_counts.get(performance, 0) + 1
+        gate = row.get("performance_gate_status") or "legacy/unavailable"
+        gate_counts[gate] = gate_counts.get(gate, 0) + 1
     lines = [
         "# Correctness summary",
         "",
         f"- Total: {len(rows)}",
         f"- Passed: {counts.get('passed', 0)}",
         f"- Failed: {len(rows) - counts.get('passed', 0)}",
-        f"- Performance: skipped (`performance_not_implemented`)",
+        f"- Performance measured: {sum(value for key, value in performance_counts.items() if key not in {'skipped', 'planned'})}",
+        f"- Ranking eligible: {sum(row.get('ranking_eligible') == 'true' for row in rows)}",
         "",
         "## Status counts",
         "",
     ]
+    if set(performance_counts) == {"skipped"}:
+        lines.insert(7, "- Legacy performance note: `performance_not_implemented` or correctness-only")
     lines.extend(f"- {name}: {counts[name]}" for name in sorted(counts))
+    lines.extend(("", "## Performance status counts", ""))
+    lines.extend(f"- {name}: {performance_counts[name]}" for name in sorted(performance_counts))
+    lines.extend(("", "## Performance gate counts", ""))
+    lines.extend(f"- {name}: {gate_counts[name]}" for name in sorted(gate_counts))
+    lines.extend(("", "## Model projection", "", "- Status: not available for this operator/suite", ""))
     failures = [row for row in rows if row["correctness_status"] != "passed"]
     if failures:
         lines.extend(("", "## Failures", ""))

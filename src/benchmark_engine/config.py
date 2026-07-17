@@ -31,6 +31,13 @@ class ResolvedEvaluationConfig:
     performance_inner_iterations: int = 20
     performance_timeout_s: int = 600
     performance_regression_threshold_pct: float = 5.0
+    perf_on_correctness_fail: bool = False
+    performance_min_speedup: float | None = None
+    performance_max_candidate_median_ms: float | None = None
+    performance_max_cv: float | None = 0.1
+    performance_max_memory_bytes: int | None = None
+    performance_unsupported_policy: str = "fail"
+    gpu_lock_timeout_s: float = 600.0
 
     def __post_init__(self) -> None:
         if self.mode not in {"all", "correctness", "performance"}:
@@ -69,6 +76,21 @@ class ResolvedEvaluationConfig:
             value = getattr(self, name)
             if not math.isfinite(float(value)) or value < 0:
                 raise ValueError(f"{name} must be finite and non-negative")
+        for name in ("performance_min_speedup", "performance_max_candidate_median_ms", "performance_max_cv"):
+            value = getattr(self, name)
+            if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float))
+                                      or not math.isfinite(float(value)) or value < 0):
+                raise ValueError(f"{name} must be finite and non-negative or None")
+        if self.performance_max_memory_bytes is not None and (
+            isinstance(self.performance_max_memory_bytes, bool)
+            or not isinstance(self.performance_max_memory_bytes, int)
+            or self.performance_max_memory_bytes < 0
+        ):
+            raise ValueError("performance_max_memory_bytes must be non-negative or None")
+        if self.performance_unsupported_policy not in {"fail", "allow"}:
+            raise ValueError("performance_unsupported_policy must be fail or allow")
+        if not math.isfinite(float(self.gpu_lock_timeout_s)) or self.gpu_lock_timeout_s < 0:
+            raise ValueError("gpu_lock_timeout_s must be finite and non-negative")
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -89,6 +111,13 @@ class ResolvedEvaluationConfig:
                 "inner_iterations": self.performance_inner_iterations,
                 "timeout_s": self.performance_timeout_s,
                 "regression_threshold_pct": self.performance_regression_threshold_pct,
+                "perf_on_correctness_fail": self.perf_on_correctness_fail,
+                "min_speedup": self.performance_min_speedup,
+                "max_candidate_median_ms": self.performance_max_candidate_median_ms,
+                "max_cv": self.performance_max_cv,
+                "max_memory_bytes": self.performance_max_memory_bytes,
+                "unsupported_policy": self.performance_unsupported_policy,
+                "gpu_lock_timeout_s": self.gpu_lock_timeout_s,
             },
         }
 
@@ -109,9 +138,16 @@ class ResolvedEvaluationConfig:
         expected_performance = {
             "timer", "graph_mode", "warmup", "samples", "inner_iterations",
             "timeout_s", "regression_threshold_pct",
+            "perf_on_correctness_fail", "min_speedup", "max_candidate_median_ms",
+            "max_cv", "max_memory_bytes", "unsupported_policy", "gpu_lock_timeout_s",
         }
-        if set(correctness) != expected_correctness or set(performance) != expected_performance:
+        legacy_performance = {
+            "timer", "graph_mode", "warmup", "samples", "inner_iterations",
+            "timeout_s", "regression_threshold_pct",
+        }
+        if set(correctness) != expected_correctness or frozenset(performance) not in {frozenset(expected_performance), frozenset(legacy_performance)}:
             raise ValueError("resolved correctness/performance has missing or unknown fields")
+        performance = {**ResolvedEvaluationConfig().to_dict()["performance"], **performance}
         seeds = correctness["seeds"]
         if not isinstance(seeds, list):
             raise TypeError("correctness.seeds must be an array")
@@ -130,6 +166,13 @@ class ResolvedEvaluationConfig:
             performance_inner_iterations=_integer(performance["inner_iterations"], "performance.inner_iterations"),
             performance_timeout_s=_integer(performance["timeout_s"], "performance.timeout_s"),
             performance_regression_threshold_pct=_number(performance["regression_threshold_pct"], "performance.regression_threshold_pct"),
+            perf_on_correctness_fail=_typed(performance["perf_on_correctness_fail"], bool, "performance.perf_on_correctness_fail"),
+            performance_min_speedup=_optional_number(performance["min_speedup"], "performance.min_speedup"),
+            performance_max_candidate_median_ms=_optional_number(performance["max_candidate_median_ms"], "performance.max_candidate_median_ms"),
+            performance_max_cv=_optional_number(performance["max_cv"], "performance.max_cv"),
+            performance_max_memory_bytes=_optional_integer(performance["max_memory_bytes"], "performance.max_memory_bytes"),
+            performance_unsupported_policy=_typed(performance["unsupported_policy"], str, "performance.unsupported_policy"),
+            gpu_lock_timeout_s=_number(performance["gpu_lock_timeout_s"], "performance.gpu_lock_timeout_s"),
         )
 
 
@@ -151,6 +194,14 @@ def _number(value: object, field: str) -> float:
     return float(value)
 
 
+def _optional_number(value: object, field: str) -> float | None:
+    return None if value is None else _number(value, field)
+
+
+def _optional_integer(value: object, field: str) -> int | None:
+    return None if value is None else _integer(value, field)
+
+
 def resolve_evaluation_config(
     operator_manifest: object,
     suite: object,
@@ -161,6 +212,14 @@ def resolve_evaluation_config(
     performance_warmup: int | None = None,
     performance_samples: int | None = None,
     performance_inner_iterations: int | None = None,
+    performance_max_slowdown_pct: float | None = None,
+    perf_on_correctness_fail: bool | None = None,
+    performance_min_speedup: float | None = None,
+    performance_max_candidate_median_ms: float | None = None,
+    performance_max_cv: float | None = None,
+    performance_max_memory_bytes: int | None = None,
+    performance_unsupported_policy: str | None = None,
+    gpu_lock_timeout_s: float | None = None,
 ) -> ResolvedEvaluationConfig:
     """Resolve CLI > suite > operator manifest > engine defaults."""
 
@@ -202,7 +261,14 @@ def resolve_evaluation_config(
             or getattr(performance, "inner_iterations", defaults.performance_inner_iterations)
         ),
         performance_timeout_s=getattr(performance, "timeout_s", defaults.performance_timeout_s),
-        performance_regression_threshold_pct=getattr(performance, "regression_threshold_pct", defaults.performance_regression_threshold_pct),
+        performance_regression_threshold_pct=(performance_max_slowdown_pct if performance_max_slowdown_pct is not None else getattr(suite, "performance_max_slowdown_pct", None) if getattr(suite, "performance_max_slowdown_pct", None) is not None else getattr(performance, "regression_threshold_pct", defaults.performance_regression_threshold_pct)),
+        perf_on_correctness_fail=(perf_on_correctness_fail if perf_on_correctness_fail is not None else getattr(suite, "perf_on_correctness_fail", None) if getattr(suite, "perf_on_correctness_fail", None) is not None else getattr(performance, "perf_on_correctness_fail", defaults.perf_on_correctness_fail)),
+        performance_min_speedup=(performance_min_speedup if performance_min_speedup is not None else getattr(suite, "performance_min_speedup", None) if getattr(suite, "performance_min_speedup", None) is not None else getattr(performance, "min_speedup", defaults.performance_min_speedup)),
+        performance_max_candidate_median_ms=(performance_max_candidate_median_ms if performance_max_candidate_median_ms is not None else getattr(suite, "performance_max_candidate_median_ms", None) if getattr(suite, "performance_max_candidate_median_ms", None) is not None else getattr(performance, "max_candidate_median_ms", defaults.performance_max_candidate_median_ms)),
+        performance_max_cv=(performance_max_cv if performance_max_cv is not None else getattr(suite, "performance_max_cv", None) if getattr(suite, "performance_max_cv", None) is not None else getattr(performance, "max_cv", defaults.performance_max_cv)),
+        performance_max_memory_bytes=(performance_max_memory_bytes if performance_max_memory_bytes is not None else getattr(suite, "performance_max_memory_bytes", None) if getattr(suite, "performance_max_memory_bytes", None) is not None else getattr(performance, "max_memory_bytes", defaults.performance_max_memory_bytes)),
+        performance_unsupported_policy=(performance_unsupported_policy or getattr(suite, "performance_unsupported_policy", None) or getattr(performance, "unsupported_policy", defaults.performance_unsupported_policy)),
+        gpu_lock_timeout_s=(gpu_lock_timeout_s if gpu_lock_timeout_s is not None else getattr(suite, "gpu_lock_timeout_s", None) if getattr(suite, "gpu_lock_timeout_s", None) is not None else getattr(performance, "gpu_lock_timeout_s", defaults.gpu_lock_timeout_s)),
     )
 
 

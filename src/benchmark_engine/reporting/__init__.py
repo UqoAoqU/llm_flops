@@ -28,6 +28,7 @@ from .csv_writer import (
     atomic_write_text,
 )
 from .summary import render_summary, summarize_evaluation
+from .compare import CompareCompatibilityError, compare_artifacts
 
 __all__ = [
     "CSV_SCHEMA_VERSION",
@@ -41,6 +42,7 @@ __all__ = [
     "CsvConflictError",
     "CsvContractError",
     "CsvSchema",
+    "CompareCompatibilityError",
     "EvaluationManifest",
     "EvaluationState",
     "HISTORY_SCHEMA",
@@ -54,5 +56,6 @@ __all__ = [
     "atomic_write_text",
     "render_summary",
     "summarize_evaluation",
+    "compare_artifacts",
     "validate_resume_compatibility",
 ]

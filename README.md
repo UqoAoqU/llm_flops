@@ -4,10 +4,8 @@ DeepSeek V4 Pro Prefill、Decode 及各算子的 CUDA 性能测试。底层后�
 
 ## Benchmark Engine
 
-> Phase 8 status: correctness-gated performance measurement is enabled with
-> wall-clock, CUDA Event, CUDA Graph, and visible auto-fallback timers. Fair
-> scheduling, ranking, and performance gates are intentionally deferred to
-> Phase 9.
+> Phase 9 status: correctness-gated `R-C-C-R` measurement, physical-GPU
+> locking, explicit performance gates, and strict artifact comparison are enabled.
 
 ### Five-minute CPU quick start
 
@@ -30,7 +28,7 @@ intentional numerical failure and its reproduction command:
 ./bench.sh run --resume <run_id>
 ```
 
-To run the included CPU performance example with the Phase 8 defaults
+To run the included CPU performance example with the Phase 9 defaults
 (warmup 5, samples 30, inner iterations 20):
 
 ```bash
@@ -41,12 +39,19 @@ To run the included CPU performance example with the Phase 8 defaults
   --warmup 5 --samples 30 --inner-iterations 20
 ```
 
-The mirrored evaluation directory contains `results.csv` schema v2 and
+The mirrored evaluation directory contains `results.csv` schema v3 and
 `performance_samples.csv` schema v2. Summary rows include requested/effective
 timer, fallback reason, stage times, reference/candidate statistics, stability,
 and optional theoretical cost rates. See the
-[performance guide](docs/performance.md) for the field semantics and Phase 8
+[performance guide](docs/performance.md) for the field semantics and Phase 9
 scope.
+
+Compare compatible artifacts without creating a `results/<run_id>` directory:
+
+```bash
+./bench.sh compare --result <evaluation_id> --baseline-result <baseline_evaluation_id>
+./bench.sh compare --run <run_id> --baseline-run <baseline_run_id>
+```
 
 Exit codes are 0 for pass, 1 for a correctness or performance failure, 2 for
 usage or configuration, 3 for worker/engine infrastructure, and 130 for Ctrl-C. Every

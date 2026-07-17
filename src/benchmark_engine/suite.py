@@ -33,6 +33,14 @@ class SuiteConfig:
     candidate_include: tuple[str, ...] = ("*",)
     performance_warmup: int | None = None
     performance_timer: str | None = None
+    perf_on_correctness_fail: bool | None = None
+    performance_min_speedup: float | None = None
+    performance_max_slowdown_pct: float | None = None
+    performance_max_candidate_median_ms: float | None = None
+    performance_max_cv: float | None = None
+    performance_max_memory_bytes: int | None = None
+    performance_unsupported_policy: str | None = None
+    gpu_lock_timeout_s: float | None = None
 
 
 def _fail(code: str, path: Path, field: str, message: str) -> None:
@@ -82,6 +90,13 @@ def _integer(value: object, path: Path, field: str, *, positive: bool = False) -
     return value
 
 
+def _number(value: object, path: Path, field: str) -> float:
+    import math
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)) or value < 0:
+        _fail("value", path, field, "must be a finite non-negative number")
+    return float(value)
+
+
 def load_suite(path: Path) -> SuiteConfig:
     """Load a suite with ``yaml.safe_load`` and an exact schema."""
 
@@ -122,7 +137,9 @@ def load_suite(path: Path) -> SuiteConfig:
     performance_required = frozenset({"samples", "inner_iterations"})
     missing_performance = performance_required.difference(performance)
     unknown_performance = set(performance).difference(
-        performance_required | {"warmup", "timer"}
+        performance_required | {"warmup", "timer", "perf_on_correctness_fail",
+                                "min_speedup", "max_slowdown_pct", "max_candidate_median_ms", "max_cv",
+                                "max_memory_bytes", "unsupported_policy", "gpu_lock_timeout_s"}
     )
     if missing_performance:
         _fail(
@@ -179,6 +196,21 @@ def load_suite(path: Path) -> SuiteConfig:
             _fail(
                 "value", path, "performance.warmup", "must be non-negative"
             )
+    perf_on_fail = None
+    if "perf_on_correctness_fail" in performance:
+        if not isinstance(performance["perf_on_correctness_fail"], bool):
+            _fail("type", path, "performance.perf_on_correctness_fail", "must be boolean")
+        perf_on_fail = performance["perf_on_correctness_fail"]
+    unsupported_policy = None
+    if "unsupported_policy" in performance:
+        unsupported_policy = _string(performance["unsupported_policy"], path, "performance.unsupported_policy")
+        if unsupported_policy not in {"fail", "allow"}:
+            _fail("value", path, "performance.unsupported_policy", "must be fail or allow")
+    max_memory = None
+    if "max_memory_bytes" in performance:
+        max_memory = _integer(performance["max_memory_bytes"], path, "performance.max_memory_bytes")
+        if max_memory < 0:
+            _fail("value", path, "performance.max_memory_bytes", "must be non-negative")
     return SuiteConfig(
         schema_version=version,
         suite_id=_string(root["suite_id"], path, "suite_id"),
@@ -199,6 +231,14 @@ def load_suite(path: Path) -> SuiteConfig:
         candidate_include=candidate_include,
         performance_warmup=performance_warmup,
         performance_timer=performance_timer,
+        perf_on_correctness_fail=perf_on_fail,
+        performance_min_speedup=(None if "min_speedup" not in performance else _number(performance["min_speedup"], path, "performance.min_speedup")),
+        performance_max_slowdown_pct=(None if "max_slowdown_pct" not in performance else _number(performance["max_slowdown_pct"], path, "performance.max_slowdown_pct")),
+        performance_max_candidate_median_ms=(None if "max_candidate_median_ms" not in performance else _number(performance["max_candidate_median_ms"], path, "performance.max_candidate_median_ms")),
+        performance_max_cv=(None if "max_cv" not in performance else _number(performance["max_cv"], path, "performance.max_cv")),
+        performance_max_memory_bytes=max_memory,
+        performance_unsupported_policy=unsupported_policy,
+        gpu_lock_timeout_s=(None if "gpu_lock_timeout_s" not in performance else _number(performance["gpu_lock_timeout_s"], path, "performance.gpu_lock_timeout_s")),
     )
 
 

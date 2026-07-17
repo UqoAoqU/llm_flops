@@ -96,8 +96,8 @@ class AtomicCsvTableTests(unittest.TestCase):
         self.assertEqual(stable.read_rows(), [stable.normalise({"row_id": "one", "message": "stable"})])
         self.assertEqual(list(self.root.glob(".data.csv.*.tmp")), [])
 
-    def test_results_v2_starts_with_schema_and_has_result_primary_key(self) -> None:
-        self.assertEqual(RESULTS_SCHEMA.version, 2)
+    def test_results_v3_starts_with_schema_and_has_result_primary_key(self) -> None:
+        self.assertEqual(RESULTS_SCHEMA.version, 3)
         self.assertEqual(RESULTS_SCHEMA.fieldnames[0], "schema_version")
         self.assertEqual(RESULTS_SCHEMA.primary_key, ("result_id",))
         self.assertEqual(RESULTS_SCHEMA.filename, "results.csv")

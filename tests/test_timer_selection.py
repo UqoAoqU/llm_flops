@@ -9,6 +9,7 @@ from benchmark_engine.performance import (
     RawSample,
     TimerConfig,
     TimerSelection,
+    TimerError,
     TimerUnsupportedError,
 )
 
@@ -143,6 +144,59 @@ class TimerSelectionTests(unittest.TestCase):
         self.assertEqual(cuda.last_graph.replay_count, 2)
         self.assertEqual([item.elapsed_ms for item in samples], [6.0, 6.0])
         self.assertEqual([item.per_call_ms for item in samples], [2.0, 2.0])
+
+    def test_graph_accepts_repeated_access_to_same_bound_method(self):
+        cuda = FakeCuda()
+
+        class Kernel:
+            def run(self):
+                cuda.elapsed += 1.0
+
+        kernel = Kernel()
+        timer = CudaGraphTimer(
+            torch_module=FakeTorch(cuda), clock=iter([0.0, 0.001]).__next__
+        )
+        timer.prepare(kernel.run, TimerConfig(1, 1))
+        self.assertEqual(len(timer.sample(kernel.run, TimerConfig(1, 1))), 1)
+
+    def test_graph_rejects_different_instance_and_different_bound_method(self):
+        cuda = FakeCuda()
+
+        class Kernel:
+            def first(self):
+                cuda.elapsed += 1.0
+
+            def second(self):
+                cuda.elapsed += 1.0
+
+        prepared = Kernel()
+        timer = CudaGraphTimer(
+            torch_module=FakeTorch(cuda), clock=iter([0.0, 0.001]).__next__
+        )
+        timer.prepare(prepared.first, TimerConfig(1, 1))
+        for different in (Kernel().first, prepared.second):
+            with self.subTest(callable=different), self.assertRaisesRegex(
+                TimerError, "same callable"
+            ):
+                timer.sample(different, TimerConfig(1, 1))
+
+    def test_graph_rejects_a_distinct_ordinary_function(self):
+        cuda = FakeCuda()
+
+        def make_kernel():
+            def kernel():
+                cuda.elapsed += 1.0
+
+            return kernel
+
+        prepared = make_kernel()
+        different = make_kernel()
+        timer = CudaGraphTimer(
+            torch_module=FakeTorch(cuda), clock=iter([0.0, 0.001]).__next__
+        )
+        timer.prepare(prepared, TimerConfig(1, 1))
+        with self.assertRaisesRegex(TimerError, "same callable"):
+            timer.sample(different, TimerConfig(1, 1))
 
     def test_cuda_event_sync_attributes_async_failure(self):
         cuda = FakeCuda(fail_sync=True)

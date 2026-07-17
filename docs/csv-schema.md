@@ -4,11 +4,11 @@ The Python authority is
 `benchmark_engine.reporting.csv_writer`; this document defines the persisted
 contract for readers and future evaluators.
 
-Phase 8 uses schema version **2** for `results.csv` and
+Phase 9 uses schema version **3** for `results.csv` and schema **2** for
 `performance_samples.csv`; `correctness_outputs.csv`, run indexes, and history
-remain schema version **1**. An exact, valid v1 results/sample header is read
-and atomically upgraded on the first append. Unknown headers are rejected, and
-missing v1 timer provenance is explicitly marked rather than inferred.
+remain schema version **1**. Exact valid v1/v2 results headers and a v1 sample
+header are read and atomically upgraded on first append. Unknown headers are
+rejected; missing provenance is explicitly marked and legacy rows are never ranked.
 
 All tables are UTF-8 comma-separated RFC 4180 files with a header and CRLF
 record terminators. `schema_version` is always the first column. Writers
@@ -45,7 +45,7 @@ primary key is `result_id`.
 
 | Fields (stable order) | Type | Null rule |
 |---|---|---|
-| `schema_version` | integer | required, always `2` |
+| `schema_version` | integer | required, always `3` |
 | `run_id`, `evaluation_id`, `timestamp_utc`, `suite_id`, `mode` | string | required |
 | `result_id`, `operator_id`, `candidate_id`, `reference_id` | string | required |
 | `contract_version` | integer | required |
@@ -64,9 +64,10 @@ primary key is `result_id`.
 | `import_ms`, `build_ms`, `first_call_ms`, `warmup_ms`, `graph_capture_ms`, `steady_state_ms` and reference-prefixed stage fields | number | empty when not measured |
 | reference/candidate mean, median, min, max, p50, p90, p95, p99, population stddev and CV fields | number | empty when not measured |
 | `reference_unstable`, `candidate_unstable`, `instability_reason` | boolean/string | empty when not measured |
-| `speedup`, `slowdown_pct` | number | reserved and empty until Phase 9 |
+| `speedup`, `slowdown_pct`, `latency_delta_ms` | number | finite measured values or empty |
+| formal/ranking booleans, gate status/reasons, resolved gate policy | boolean/string/number | new rows required; legacy rows migrate non-rankable |
 | `tflops`, `effective_bandwidth_gbps`, `flops`, `estimated_bytes`, `arithmetic_intensity`, `throughput` | number | empty when no theoretical cost model applies |
-| `peak_memory_bytes`, `workspace_bytes` | integer | empty when unavailable |
+| allocated/reserved peak memory and `workspace_bytes` | integer | empty when unavailable |
 | `error_type`, `error_message`, `diagnostic_path`, `stdout_path`, `stderr_path` | string | empty on success |
 | `profile_path` | string | reserved and empty while profiler support is excluded |
 

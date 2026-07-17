@@ -29,6 +29,12 @@ performance:
   inner_iterations: 1
   timeout_s: 30
   regression_threshold_pct: 5.0
+  min_speedup: 1.0
+  max_candidate_median_ms: 10.0
+  max_cv: 0.1
+  max_memory_bytes: 1073741824
+  unsupported_policy: fail
+  gpu_lock_timeout_s: 600
 cost_model: spec:cost_model
 ```
 
@@ -43,6 +49,9 @@ The trusted `spec_entrypoint` implements `OperatorSpec` and declares its stable
 `cost_model()`. Controller-side planning imports only `cases()` metadata and
 still rejects torch imports there. Runtime methods execute inside an isolated
 worker; tensor objects never enter the JSON protocol.
+
+An optional `workspace_bytes(case) -> int | None` hook reports candidate
+workspace demand. Missing/unavailable values persist as empty fields, never zero.
 
 `make_inputs(case, context)` receives explicit seeded CPU/CUDA generators and
 returns `benchmark_engine.correctness.InputBundle`. `clone_inputs()` must

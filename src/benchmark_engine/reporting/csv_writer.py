@@ -137,6 +137,13 @@ RESULTS_FIELDNAMES = (
     "environment_fingerprint",
     "device",
     "gpu_name",
+    "gpu_uuid",
+    "logical_device",
+    "visible_device",
+    "cuda_visible_devices",
+    "driver_version",
+    "other_compute_processes_detected",
+    "telemetry_error",
     "cuda_version",
     "torch_version",
     "case_id",
@@ -161,6 +168,9 @@ RESULTS_FIELDNAMES = (
     "requested_timer",
     "effective_timer",
     "timer_fallback_reason",
+    "reference_requested_timer",
+    "reference_effective_timer",
+    "reference_timer_fallback_reason",
     "import_ms",
     "build_ms",
     "first_call_ms",
@@ -196,6 +206,18 @@ RESULTS_FIELDNAMES = (
     "instability_reason",
     "speedup",
     "slowdown_pct",
+    "latency_delta_ms",
+    "performance_formal",
+    "ranking_eligible",
+    "performance_gate_status",
+    "performance_gate_reasons",
+    "perf_on_correctness_fail",
+    "gate_max_slowdown_pct",
+    "gate_min_speedup",
+    "gate_max_candidate_median_ms",
+    "gate_max_cv",
+    "gate_max_memory_bytes",
+    "gate_unsupported_policy",
     "tflops",
     "effective_bandwidth_gbps",
     "flops",
@@ -203,6 +225,7 @@ RESULTS_FIELDNAMES = (
     "arithmetic_intensity",
     "throughput",
     "peak_memory_bytes",
+    "peak_reserved_memory_bytes",
     "workspace_bytes",
     "error_type",
     "error_message",
@@ -211,6 +234,16 @@ RESULTS_FIELDNAMES = (
     "stderr_path",
     "profile_path",
 )
+
+_RESULTS_V2_FIELDNAMES = tuple(name for name in RESULTS_FIELDNAMES if name not in {
+    "gpu_uuid", "logical_device", "visible_device", "cuda_visible_devices", "driver_version",
+    "other_compute_processes_detected", "telemetry_error", "reference_requested_timer",
+    "reference_effective_timer", "reference_timer_fallback_reason", "latency_delta_ms",
+    "performance_formal", "ranking_eligible", "performance_gate_status",
+    "performance_gate_reasons", "perf_on_correctness_fail", "gate_max_slowdown_pct",
+    "gate_min_speedup", "gate_max_candidate_median_ms", "gate_max_cv",
+    "gate_max_memory_bytes", "gate_unsupported_policy", "peak_reserved_memory_bytes",
+})
 
 CORRECTNESS_OUTPUT_FIELDNAMES = (
     "schema_version",
@@ -258,7 +291,7 @@ PERFORMANCE_SAMPLE_FIELDNAMES = (
 
 _RESULTS_V1_FIELDNAMES = tuple(
     name
-    for name in RESULTS_FIELDNAMES
+    for name in _RESULTS_V2_FIELDNAMES
     if name
     not in {
         "requested_timer",
@@ -330,6 +363,8 @@ def _results_columns(names: tuple[str, ...]) -> tuple[CsvColumn, ...]:
                 "mismatch_count",
                 "peak_memory_bytes",
                 "workspace_bytes",
+                "peak_reserved_memory_bytes",
+                "gate_max_memory_bytes",
             }
         ),
         numbers=frozenset(
@@ -372,6 +407,11 @@ def _results_columns(names: tuple[str, ...]) -> tuple[CsvColumn, ...]:
                 "candidate_cv",
                 "speedup",
                 "slowdown_pct",
+                "latency_delta_ms",
+                "gate_max_slowdown_pct",
+                "gate_min_speedup",
+                "gate_max_candidate_median_ms",
+                "gate_max_cv",
                 "tflops",
                 "effective_bandwidth_gbps",
                 "flops",
@@ -381,9 +421,11 @@ def _results_columns(names: tuple[str, ...]) -> tuple[CsvColumn, ...]:
             }
         ),
         booleans=frozenset(
-            {"correctness_pass", "reference_unstable", "candidate_unstable"}
+            {"correctness_pass", "reference_unstable", "candidate_unstable",
+             "performance_formal", "ranking_eligible", "perf_on_correctness_fail",
+             "other_compute_processes_detected"}
         ),
-        allowed_values={
+        allowed_values={key: value for key, value in {
             "mode": frozenset({"all", "correctness", "performance"}),
             "status": frozenset(status.value for status in ResultStatus),
             "correctness_status": frozenset(
@@ -392,7 +434,9 @@ def _results_columns(names: tuple[str, ...]) -> tuple[CsvColumn, ...]:
             "performance_status": frozenset(
                 status.value for status in PerformanceStatus
             ),
-        },
+            "performance_gate_status": frozenset({"passed", "failed", "skipped"}),
+            "gate_unsupported_policy": frozenset({"fail", "allow"}),
+        }.items() if key in names},
     )
 
 
@@ -405,25 +449,44 @@ RESULTS_SCHEMA_V1 = CsvSchema(
 
 
 def _migrate_results_v1(row: Mapping[str, object], version: int) -> Mapping[str, object]:
-    if version != 1:
+    if version not in {1, 2}:
         raise CsvContractError(f"unsupported results.csv migration from v{version}")
     migrated: dict[str, object] = dict(row)
-    migrated["schema_version"] = 2
+    migrated["schema_version"] = 3
     timer = row.get("timer") or ""
-    migrated["requested_timer"] = timer
-    migrated["effective_timer"] = timer
-    migrated["timer_fallback_reason"] = (
-        "not_recorded_in_schema_v1" if timer else ""
-    )
+    if version == 1:
+        migrated["requested_timer"] = timer
+        migrated["effective_timer"] = timer
+        migrated["timer_fallback_reason"] = "not_recorded_in_schema_v1" if timer else None
+    migrated.update({
+        "reference_requested_timer": None,
+        "reference_effective_timer": None,
+        "reference_timer_fallback_reason": "not_recorded_before_schema_v3",
+        "performance_formal": False,
+        "ranking_eligible": False,
+        "performance_gate_status": "skipped",
+        "performance_gate_reasons": '["legacy_schema_not_rankable"]',
+        "perf_on_correctness_fail": False,
+        "gate_max_slowdown_pct": None,
+        "gate_min_speedup": None,
+        "gate_max_candidate_median_ms": None,
+        "gate_max_cv": None,
+        "gate_max_memory_bytes": None,
+        "gate_unsupported_policy": "fail",
+    })
     return migrated
 
+
+RESULTS_SCHEMA_V2 = CsvSchema(
+    "results.csv", _results_columns(_RESULTS_V2_FIELDNAMES), ("result_id",), version=2,
+)
 
 RESULTS_SCHEMA = CsvSchema(
     "results.csv",
     _results_columns(RESULTS_FIELDNAMES),
     ("result_id",),
-    version=2,
-    compatible_previous=(RESULTS_SCHEMA_V1,),
+    version=3,
+    compatible_previous=(RESULTS_SCHEMA_V1, RESULTS_SCHEMA_V2),
     migrate_previous=_migrate_results_v1,
 )
 
@@ -847,5 +910,6 @@ __all__ = [
     "RESULTS_FIELDNAMES",
     "RESULTS_SCHEMA",
     "RESULTS_SCHEMA_V1",
+    "RESULTS_SCHEMA_V2",
     "atomic_write_text",
 ]

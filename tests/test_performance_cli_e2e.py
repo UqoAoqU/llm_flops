@@ -55,13 +55,16 @@ class PerformanceCliE2ETests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary) / "results"
             code, stdout, stderr = self.run_candidate(output, PASS)
-            self.assertEqual((code, stderr), (0, ""))
+            self.assertEqual((code, stderr), (1, ""))
             evaluation = self.evaluation(output, PASS)
             with (evaluation / "results.csv").open(newline="", encoding="utf-8") as stream:
                 rows = list(csv.DictReader(stream))
             self.assertEqual(len(rows), 1)
             self.assertEqual(rows[0]["correctness_status"], "passed")
             self.assertEqual(rows[0]["performance_status"], "unstable")
+            self.assertEqual(rows[0]["status"], "failed")
+            self.assertEqual(rows[0]["performance_gate_status"], "failed")
+            self.assertEqual(rows[0]["ranking_eligible"], "false")
             self.assertEqual(rows[0]["requested_timer"], "wall_clock")
             self.assertEqual(rows[0]["effective_timer"], "wall_clock")
             manifest = json.loads(
@@ -211,6 +214,13 @@ class PerformanceCliE2ETests(unittest.TestCase):
             with patch("benchmark_engine.engine.WorkerController", FailureController):
                 code, stdout, _ = self.run_candidate(output, PASS, "--samples", "1")
             self.assertEqual(code, 1)
+            evaluation = self.evaluation(output, PASS)
+            with (evaluation / "results.csv").open(
+                newline="", encoding="utf-8"
+            ) as stream:
+                row = next(csv.DictReader(stream))
+            self.assertEqual(row["performance_status"], "error")
+            self.assertEqual(row["status"], "error")
             run_id = next(
                 line.split(":", 1)[1].strip()
                 for line in stdout.splitlines()
@@ -325,6 +335,40 @@ class PerformanceCliE2ETests(unittest.TestCase):
             self.assertEqual(row["correctness_status"], "passed")
             self.assertEqual(row["performance_status"], "crashed")
             self.assertEqual(row["status"], "crashed")
+
+    def test_hard_sampling_oom_without_payload_preserves_oom_status(self):
+        class HardOomController:
+            def __init__(self, **kwargs):
+                pass
+
+            def run(self, job, **kwargs):
+                return WorkerResponse(
+                    identity=job.identity,
+                    result_id=job.result_id,
+                    outcome=WorkerOutcome.OOM,
+                    stage=WorkerStage.SAMPLING,
+                    worker_pid=1,
+                    started_at_utc="2026-07-16T12:00:00Z",
+                    finished_at_utc="2026-07-16T12:00:01Z",
+                    elapsed_s=1.0,
+                    stage_elapsed_s={"sampling": 1.0},
+                    error_type="MemoryError",
+                    error_message="sampling exhausted device memory",
+                )
+
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "results"
+            with patch("benchmark_engine.engine.WorkerController", HardOomController):
+                code, _, stderr = self.run_candidate(output, PASS, "--samples", "1")
+            self.assertEqual((code, stderr), (1, ""))
+            evaluation = self.evaluation(output, PASS)
+            with (evaluation / "results.csv").open(
+                newline="", encoding="utf-8"
+            ) as stream:
+                row = next(csv.DictReader(stream))
+            self.assertEqual(row["correctness_status"], "passed")
+            self.assertEqual(row["performance_status"], "oom")
+            self.assertEqual(row["status"], "oom")
 
 
 if __name__ == "__main__":
