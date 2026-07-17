@@ -1,109 +1,92 @@
-# Architecture
+# 架构
 
-Phase 9 keeps scheduling in the Controller: CUDA manifests acquire a UUID-keyed
-cross-process lock before worker launch. The Worker independently prepares both
-implementations and emits fixed `R-C-C-R` raw samples; the Controller validates
-sample indices and recomputes the trusted performance gate before writing the
-mirrored evaluation. Compare and summarize are read-only artifact consumers.
+Benchmark Engine 采用 Controller/Worker 两层结构。Controller 负责静态发现、计划、
+调度、超时清理和唯一的正式 artifact 写入；Worker 才会导入 reference spec、reference
+实现和 candidate 实现，并在同一隔离进程内执行正确性与性能测量。
 
-Phase 8 lifecycle: Registry → runtime environment identity → deterministic plan
-→ ArtifactWriter → isolated case worker → in-worker correctness gate → staged
-performance evaluator → controller-only CSV projection → completion or resume.
-The controller never imports candidate modules. Import, build/JIT, first call,
-warmup, graph capture, and steady-state sampling remain distinct stages.
+```text
+CLI
+ └─ Registry ──> Suite/Selectors ──> EvaluationPlan
+                                      │
+                                      v
+                              Controller + GPU Lock
+                                      │ JSON-safe request/events/response
+                                      v
+                         Worker: import -> build -> correctness
+                                             -> prepare -> R-C-C-R samples
+                                      │
+                                      v
+                         ArtifactWriter -> mirrored results
+                                      │
+                         summarize / compare / resume
+```
 
-The engine uses a `src/benchmark_engine` package and keeps the legacy scripts
-at the repository root until migration is complete.
+## 核心边界
 
-The controller-facing data contracts live in `benchmark_engine.models`.
-They are frozen dataclasses with explicit `to_dict()` and `from_dict()`
-methods. Their wire forms contain JSON-safe metadata only: tensors, callables,
-and arbitrary runtime objects are rejected. Paths, tuples, frozensets, and
-stable status enums survive a JSON round trip.
+- **Registry** 只解析 manifest、检查 entrypoint 文件和计算 source hash，不导入
+  candidate。
+- **Planning** 把 suite、选择器、case 和配置解析为不可变、可排序的 job；dry-run
+  使用 provisional environment fingerprint 且没有正式文件副作用。
+- **Controller** 启动独立进程组，持续排空 stdout/stderr，执行分阶段硬超时，清理
+  Ninja/NVCC/PTXAS 等子进程，并持有物理 GPU UUID 锁。
+- **Worker** 加载运行时代码，生成输入，执行正确性门禁，完成计时和内存采样，仅通过
+  JSON-safe 协议返回结构化结果。
+- **Reporting** 是 formal CSV/JSON 的唯一写入方；每个 case 完成后原子落盘，允许
+  中断后按 `result_id` 恢复。
+- **Readers**（summarize/compare）只读取 artifact，不执行 operator 代码。
 
-The package boundaries are:
+## 执行生命周期
 
-- `registry`: strict manifest discovery, static entrypoint checks, and source
-  hashing. It returns immutable controller metadata and never imports modules.
-- `execution`: strict JSON protocol, managed subprocess worker, process-group
-  cleanup, stage timeouts, bounded logs, and structured lifecycle events.
-- `correctness`: runtime-only input bundles, output normalization, comparators,
-  bounded diagnostics, and the reference/candidate evaluator.
-- `performance`: wall-clock/CUDA timers, raw sampling, statistics, and
-  theoretical cost rates. Fair scheduling and performance gates remain future work.
-- `reporting`: versioned CSV tables, atomic artifacts, mirrored indexes, and
-  resume discovery. The controller is the sole formal writer.
-- `environment`: adapters that reuse the legacy collector and fingerprints.
-- `projection`: optional per-call to model-level projections.
+一个 job 按以下顺序推进：
 
-Phase 3 implements strict suites, selectors, resolved per-job configuration,
-environment identity, and deterministic plans. Phase 4 adds the durable
-reporting boundary. Phase 5 executes only the import/build skeleton in a
-managed worker. Phase 6 implements correctness as an independent worker-local
-library but deliberately does not change the wire schema or CLI; Phase 7
-performs that integration. Phase 8 runs performance only after correctness and
-persists hard performance failures without inventing samples.
+1. 导入可信 spec、reference 和 candidate；
+2. 执行可选 candidate build；
+3. 由 spec 创建 canonical input，并为两侧生成物理隔离 clone；
+4. 执行 reference/candidate、规范化输出、比较返回值和 observed state；
+5. 正确性通过后，分别完成 first call、warmup 和 graph capture；
+6. 以固定 `R-C-C-R` 次序交错采样并计算统计量；
+7. Controller 重新验证样本序号、timer provenance 和性能门禁；
+8. 原子追加 case 行并更新 evaluation 状态。
 
-Runtime `correctness.InputBundle` and normalized leaf values may contain
-tensors and must remain in the worker. They are separate from the JSON-safe
-metadata models in `benchmark_engine.models`. The evaluator constructs a
-canonical seeded input once, creates storage-isolated reference/candidate
-clones, synchronizes touched CUDA devices after each call, normalizes return
-values and observed mutable state, then applies the reference-owned comparator.
+Import、build、first call、warmup、graph capture 和 steady state 是不同阶段。JIT
+发生在哪个阶段就计入该阶段，不能通过预热隐藏进性能样本，也不能混入 steady-state。
 
-The lifecycle is suite/config load -> static registry discovery and validation
--> trusted reference-spec metadata import -> selector expansion -> immutable
-`EvaluationPlan`. Only the reference `spec_entrypoint` may be imported by the
-controller; candidate modules are never imported. Each job carries its complete
-JSON-safe resolved configuration and final result/evaluation identities.
+## 数据与身份
 
-`bench run --dry-run` hashes normalized lock-file contents to obtain a
-`provisional/dry-run` planning fingerprint. It deliberately does not collect
-the environment, import torch, initialize CUDA, create result directories, or
-write formal artifacts. A later execution phase replaces that provisional
-identity with the real fingerprint returned by the shared legacy collector.
+Controller-facing 模型位于 `benchmark_engine.models`，使用 frozen dataclass 和显式
+`to_dict()/from_dict()`；wire form 只能包含 JSON-safe 元数据，禁止 tensor、callable、
+pickle 和 shell command string。运行时 `InputBundle`、tensor 和 normalized output
+只存在于 Worker。
 
-Candidate source directories mirror result directories by operator and
-candidate ID. Evaluation directories add a third validated identity component;
-there is no run-ID result root.
+源码和结果共享两个身份键：
 
-The reporting lifecycle is initialization (`planned`, manifest, empty tables,
-logs, run index), transition to `running`, then one terminal state. An
-`interrupted` compatible evaluation may resume at `running`; `failed` and
-`complete` remain terminal. Only `complete` publishes candidate `history.csv`
-and monotonic `latest.json`. All formal
-updates replace a flushed same-directory temporary file; duplicate row keys
-are idempotent only when the complete row is identical. Resume validates the
-durable manifest before returning the set of already completed `result_id`
-values. The authoritative layouts and fields are in
-[Result layout](result-layout.md) and [CSV schemas](csv-schema.md).
+```text
+operators/candidates/<operator_id>/<candidate_id>/
+results/<operator_id>/<candidate_id>/<evaluation_id>/
+```
 
-## Controller/worker boundary
+`run_id` 关联一次命令产生的多个 evaluation，仅出现在 `run_index.csv`，不是目录名。
+`evaluation_id` 包含 UTC 时间、环境短 hash 和 run 短 ID。
 
-The controller turns a prevalidated `EvaluationJob` into a schema-v1
-`WorkerRequest`, starts `python -m benchmark_engine.execution.worker` with a
-new POSIX session, continuously drains both output pipes, applies independent
-import/build/correctness/performance hard deadlines, and consumes a strict
-JSONL event stream. It never imports `spec.py`, reference implementation, or
-candidate implementation. The worker validates every declared root and
-entrypoint, then loads reference spec, reference implementation, and candidate
-implementation in that order.
+## 状态与恢复
 
-Requests contain identities, absolute validated roots, entrypoint strings,
-`CaseSpec` metadata, resolved configuration, optional build argv, and timeout
-values. They never contain pickle, callables, tensors, or shell command
-strings. Responses contain a stable outcome (`success`, `error`, `timeout`,
-`oom`, `crashed`, `unsupported`, or `interrupted`), failed stage, bounded error
-summary, timings, and a diagnostic reference. Full tracebacks stay in
-`diagnostics/`.
+Manifest 状态机是：
 
-On timeout or interruption the controller sends TERM to the entire worker
-process group, waits a short grace period, sends KILL, and reaps the leader.
-It also removes descendants after normal worker exit, covering compiler and
-build children such as Ninja, NVCC, and PTXAS. Heartbeats expose the current
-stage, worker/known child PIDs, elapsed time, and a bounded recent log tail;
-heartbeats never extend the hard stage deadline.
+```text
+planned -> running -> complete | failed | interrupted
+                        ^
+interrupted ------------|
+```
 
-This subprocess boundary is failure isolation, not a security sandbox.
-Candidate code still has the worker user's permissions. Untrusted code needs a
-separate container/user/filesystem/network policy outside this engine.
+只有兼容的 `interrupted` evaluation 可以恢复到 `running`。`complete` 和 `failed` 是
+终态。只有完整完成的 evaluation 才发布 `history.csv` 和 `latest.json`；中断或失败的
+目录保留用于诊断。
+
+## 信任和安全
+
+Reference spec 是仓库内可信代码；candidate 不可信于正确性，但仍以 Worker 用户权限
+运行。进程组、路径验证、超时和有界日志提供故障隔离，不是安全沙箱。评测真正不可信
+代码时，还需在引擎外配置独立容器、用户、文件系统和网络策略。
+
+源码模块对应关系见 [代码实现导读](implementation.md)，文件协议见
+[结果目录](result-layout.md) 与 [CSV Schema](csv-schema.md)。

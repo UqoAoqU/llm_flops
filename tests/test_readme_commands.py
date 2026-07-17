@@ -6,7 +6,7 @@ from benchmark_engine.cli import build_parser
 
 
 class ReadmeCommandTests(unittest.TestCase):
-    def test_phase8_quick_start_and_performance_commands_parse(self):
+    def test_quick_start_and_performance_commands_parse(self):
         parser = build_parser()
         commands = (
             ("validate", "--operator", "example_cpu_add"),
@@ -33,7 +33,7 @@ class ReadmeCommandTests(unittest.TestCase):
             with self.subTest(command=command):
                 parser.parse_args(command)
 
-    def test_performance_guide_is_indexed_and_names_phase8_boundaries(self):
+    def test_performance_guide_is_indexed_and_documents_measurement_contract(self):
         from pathlib import Path
 
         root = Path(__file__).resolve().parents[1]
@@ -44,7 +44,8 @@ class ReadmeCommandTests(unittest.TestCase):
             "CUDA Graph",
             "population standard deviation",
             "Type-7",
-            "Phase 9",
+            "order_index",
+            "cost_model(case)",
             "performance_samples.csv",
         ):
             with self.subTest(phrase=phrase):

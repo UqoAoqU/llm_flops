@@ -11,5 +11,5 @@ The SGLang private JIT cache is materialized while the worker imports the
 reference entrypoint. Ninja/PTXAS therefore appears in `import_ms`; metadata,
 page tables and output allocation are prepared before timing. Only the public
 optimized kernel is captured and sampled in steady state.
-The Phase 11 control candidate is a byte-identical copy of this implementation,
+The control candidate is a byte-identical copy of this implementation,
 so its expected performance ratio is approximately 1x.

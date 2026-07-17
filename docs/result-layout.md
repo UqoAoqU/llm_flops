@@ -1,39 +1,13 @@
-# Result layout
+# 结果目录与恢复
 
-```text
-results/<operator_id>/<candidate_id>/<evaluation_id>/
-  evaluation_manifest.json
-  results.csv
-  correctness_outputs.csv
-  performance_samples.csv
-  summary.md
-  diagnostics/
-  logs/{controller.jsonl,worker.jsonl,stdout.log,stderr.log}
-```
-
-Each case atomically updates CSV artifacts. Performance samples have only a
-schema header in Phase 7. History/latest publish only after every expected result
-is terminal without infrastructure failure. Resume uses `run_index.csv` and
-deduplicates by `result_id`.
-
-Applies to manifest schema v1 and CSV schema v1.
-
-Candidate source and result directories share the same two identity keys:
+Candidate source 和 result 共享 `<operator_id>/<candidate_id>`：
 
 ```text
 operators/candidates/<operator_id>/<candidate_id>/
-results/<operator_id>/<candidate_id>/
 results/<operator_id>/<candidate_id>/<evaluation_id>/
 ```
 
-The path API validates every identifier and verifies the resolved path remains
-inside its configured root. Absolute identifiers, traversal, separators, and
-invalid or non-UTC timestamps are rejected.
-
-The evaluation ID format is
-`<YYYYMMDDTHHMMSSZ>__<environment-short-hash>__<run-short-id>`. A global
-`run_id` correlates evaluations in `results/run_index.csv`; it is never a
-directory name.
+完整布局：
 
 ```text
 results/
@@ -55,64 +29,57 @@ results/
             └── stderr.log
 ```
 
-Phase 5 stores the strict worker request/response and controller diagnostics
-under `diagnostics/`. Full exception tracebacks are diagnostic text files;
-`results.csv` and the response protocol contain only a short message plus a
-relative diagnostic path. Worker failures do not rewrite a previously durable
-result row.
+`evaluation_id` 格式是
+`<YYYYMMDDTHHMMSSZ>__<environment-short-hash>__<run-short-id>`。`run_id` 用于关联
+一次命令产生的多个 evaluation，存放在 `results/run_index.csv`，从不作为结果根目录。
+所有身份组件都经过路径验证；绝对路径、traversal 和分隔符会被拒绝。
 
-`logs/worker.jsonl` records schema-v1 events in lifecycle order:
-`DISCOVERED`, `WORKER_STARTED`, paired import/build/correctness/warmup/sampling
-events, `REPORT_WRITTEN`, and `WORKER_EXITED`. Long active stages may insert
-`HEARTBEAT` records. In Phase 5 the correctness, warmup, and sampling pairs end
-with `status=skipped`; they must not be interpreted as measured results.
-`controller.jsonl` records the supervisor outcome and truncation flags.
-Both JSONL files append one result transcript/record within the evaluation;
-running a later case must not erase an earlier case. Event sequence numbers are
-continuous across the evaluation and each `result_id` still has a complete,
-independently valid lifecycle.
+## Evaluation manifest
 
-Retries of the same `result_id` are separate attempts. Every `DISCOVERED`
-record starts one attempt transcript, even when its identity and result ID
-match an earlier transcript. Request/response/controller-diagnostic filenames
-include a monotonically increasing per-result attempt number, so a crash can
-never consume or overwrite a prior successful response.
+`evaluation_manifest.json` 保存 schema version、完整 identity、生命周期状态、原始命令、
+resolved configuration、双方 source hash、suite/mode 和 environment snapshot/fingerprint。
 
-Stdout and stderr are drained continuously to prevent a verbose candidate or
-compiler from blocking on a full pipe. Each formal log has a configured byte
-limit and receives an explicit truncation marker when exceeded. Console/in-
-memory summaries have a smaller independent bound. The stdout/stderr byte cap
-applies to the whole evaluation, not separately to each case, and the
-truncation marker is written at most once.
+状态转换严格为：
 
-Initialization records a mirrored evaluation in `run_index.csv`, allowing an
-interrupted run to be found. `history.csv` receives exactly one row only after
-the evaluation reaches `complete`; `latest.json` is atomically replaced last
-and therefore never points at planned, running, failed, interrupted, or
-half-written output. Failed and interrupted artifacts remain in place for
-diagnosis and resume.
+```text
+planned -> running -> complete | failed | interrupted
+interrupted -> running          # 仅兼容 resume
+```
 
-`evaluation_manifest.json` stores schema version, full identity, lifecycle
-state, original command, resolved configuration, both source hashes, suite and
-mode, and the environment snapshot/fingerprint. Allowed state changes are
-strictly `planned -> running -> complete|failed|interrupted`, plus
-`interrupted -> running` when the same compatible evaluation is resumed. A
-resume clears the previous terminal reason. `failed` and `complete` remain
-terminal. A repeated identical state update is idempotent; any other transition
-is rejected.
+相同状态更新可幂等重放；其他转换拒绝。Resume 会清除旧 interrupted reason；`failed`
+和 `complete` 是终态。
 
-`latest.json` is rebuilt from complete `history.csv` rows, ordered by canonical
-`completed_at_utc` and then `evaluation_id`. Retrying publication of an older
-complete evaluation can repair a missing latest file but cannot move latest
-backwards.
+## CSV 与发布索引
 
-Resume resolves a run through `run_index.csv`, checks that the indexed path is
-the path implied by its identity, then validates manifest schema, identity,
-sources, resolved config, suite/mode, and environment. Existing `result_id`
-values in `results.csv` are returned as complete work and conflicting rows may
-not replace them. See [CSV schema v1](csv-schema.md).
+- `results.csv`：每个 `operator × candidate × case × seed` 一行汇总；
+- `correctness_outputs.csv`：每个 normalized output path 一行；
+- `performance_samples.csv`：reference/candidate 每个原始计时样本一行；
+- `history.csv`：该 candidate 已完成 evaluation 的追加历史；
+- `latest.json`：按 completion time 和 evaluation ID 指向最新 complete evaluation；
+- `run_index.csv`：把 run ID 映射到一个或多个镜像 evaluation 路径。
 
-Formal text, JSON, and CSV mutations use a same-directory temporary file,
-flush/fsync, and atomic replacement. The controller remains the only formal
-artifact/CSV writer; workers write only their dedicated response, diagnostic,
-and append-only event channels.
+只有 evaluation 的所有预期结果都终止且没有基础设施失败时，才发布 `history.csv` 和
+`latest.json`。Failed/interrupted 目录保留诊断，但不会成为 latest。
+
+## Worker 记录
+
+`logs/worker.jsonl` 按 attempt 记录 `DISCOVERED`、`WORKER_STARTED`、各阶段 start/end、
+`HEARTBEAT`、`REPORT_WRITTEN` 和 `WORKER_EXITED`。`controller.jsonl` 记录监督结果和
+截断标记。Stdout/stderr 被持续排空并设总字节上限，达到上限后写一次显式 truncation
+marker，仍继续排空以避免死锁。
+
+同一 `result_id` 的重试使用递增 attempt 文件名；旧 response 不会被新 attempt 复用。
+Full traceback 和协议诊断位于 `diagnostics/`，CSV 只保存短错误摘要和相对路径。
+
+## 原子性和幂等
+
+每个完成 case 都立即更新 artifact。正式 text/JSON/CSV 使用同目录临时文件，flush、
+fsync 后 `os.replace()`。同一主键和完全相同行可幂等重放；同键不同内容是冲突，不能
+覆盖已有事实。Controller 是唯一正式 writer，Worker 只写自己的 response、diagnostic
+和 append-only event channel。
+
+Resume 通过 `run_index.csv` 定位 evaluation，再验证路径、manifest schema、identity、
+source、resolved config、suite/mode 和 environment。`results.csv` 中已有 `result_id`
+被视为完成工作，只执行缺失部分。
+
+字段的当前版本与精确列顺序见 [CSV Schema](csv-schema.md)。

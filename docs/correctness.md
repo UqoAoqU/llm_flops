@@ -16,10 +16,6 @@ Correctness-only rows use `performance_status=skipped` and
 `correctness_only_mode`. In performance mode, failed correctness uses
 `correctness_gate_failed` and produces no performance samples or ranking input.
 
-Historically, Phase 6 supplied the worker-local library and Phase 7 supplied
-the CLI integration. Phase 8 retains the same contract as a mandatory gate
-before its performance timers.
-
 ## Inputs and state
 
 For each `CaseSpec`, the evaluator creates explicit CPU and requested CUDA

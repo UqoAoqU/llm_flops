@@ -1,8 +1,8 @@
 # Performance measurement
 
-Phase 9 adds correctness-gated fair measurement, physical-GPU locking,
-performance gates, and strict artifact comparison. Nsight/NVTX, profiler
-backends, operator migration, and multi-GPU scheduling remain excluded.
+Performance measurement is correctness-gated and uses fair interleaving,
+physical-GPU locking, explicit gates, and strict artifact comparison.
+Nsight/NVTX, profiler backends, and multi-GPU scheduling are not implemented.
 
 ## CPU example
 
@@ -51,7 +51,7 @@ different effective timers fail the formal performance gate.
 
 Import and candidate build are distinct stages. Runtime JIT commonly occurs
 during the first call or graph capture; those durations are excluded from
-steady state, but Phase 8 does not claim a separate `jit_ms` field. First call,
+steady state. The schema does not expose a separate `jit_ms` field. First call,
 warmup, graph capture, and sampling are measured separately. Only steady-state
 samples contribute to latency statistics. The stage totals are retained as `import_ms`, `build_ms`,
 `first_call_ms`, `warmup_ms`, `graph_capture_ms`, and `steady_state_ms`, with
@@ -66,7 +66,9 @@ manifest value, engine default. Relevant CLI options include `--timer`,
 ## Raw data and statistics
 
 After both roles complete independent first-call, warmup, and graph capture,
-steady samples follow fixed `R-C-C-R` order. `performance_samples.csv` schema v3 stores each reference/candidate sample
+steady samples follow fixed `R-C-C-R` order. `order_index` is the global
+execution order in this interleaving, not a rank. `performance_samples.csv`
+schema v3 stores each reference/candidate sample
 separately, including `elapsed_ms`, `per_call_ms`, `inner_iterations`, timer
 provenance, a global order index, and compact output-path maps for both
 implementations' dtype and shape. `results.csv` schema v3 stores the aggregate
@@ -99,11 +101,14 @@ calculating a misleading speedup.
 
 ## Theoretical cost model
 
-An operator may return theoretical FLOPs, estimated bytes, and optional
-throughput units. With a positive candidate median latency the engine derives
+`spec.py` 的 `cost_model(case)` may return theoretical FLOPs, estimated bytes,
+and optional throughput units. With a positive candidate median latency the engine derives
 TFLOP/s, effective decimal GB/s, arithmetic intensity, and throughput. Missing
 cost data is recorded as unavailable, never as zero. These are theoretical
-rates rather than profiler measurements.
+rates rather than profiler measurements. They appear in `results.csv` as
+`flops`, `estimated_bytes`, `tflops`, `effective_bandwidth_gbps`,
+`arithmetic_intensity`, and `throughput`; raw timing remains in `per_call_ms`
+and is never multiplied or replaced by the cost model.
 
 See [CSV schemas](csv-schema.md) for persisted fields and
 [result/resume layout](result-layout.md) for artifact placement.

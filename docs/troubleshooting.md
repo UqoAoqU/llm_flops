@@ -15,10 +15,6 @@ but never ranked.
 - A correctness-only run records `performance_status=skipped` with
   `skip_reason=correctness_only_mode`; this is not a performance pass.
 
-Historical note: Phase 5 introduced import/build isolation. The correctness
-workflow was extended through Phase 9 with gated fair performance
-measurement and explicit warmup/sampling stages.
-
 ## A worker times out during import or build
 
 Inspect `logs/worker.jsonl` to identify the active stage and its heartbeat,
@@ -30,11 +26,11 @@ Ninja/NVCC/PTXAS children, with TERM followed by KILL.
 Increase a timeout only when the declared workload legitimately requires it.
 Do not disable the timeout or treat compiler output as a successful stage.
 
-For Phase 11 SGLang references, the private JIT cache accessor runs while the
-worker imports `implementation.py`, so cold Ninja/PTXAS duration is reported as
+For SGLang references that materialize a private JIT cache while importing
+`implementation.py`, cold Ninja/PTXAS duration is reported as
 `import_ms`. TopK plan metadata, page tables, RoPE frequencies, positions and
 output storage are prepared before sampling. `first_call_ms`, `warmup_ms`,
-`graph_build_ms` and steady samples remain distinct. An `import` heartbeat with
+`graph_capture_ms` and steady samples remain distinct. An `import` heartbeat with
 an active `ninja` or `ptxas` child is expected on a cold cache. A compiler
 failure remains an import error, never a performance sample. Do not move these
 private JIT calls into candidate code or a timed operator.

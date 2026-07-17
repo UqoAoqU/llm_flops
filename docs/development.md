@@ -1,64 +1,50 @@
-# Development
+# 开发与测试
 
-Phase 7 CLI changes require temporary output roots and real subprocess workers.
-Tests cover pass, numerical failure, exception, hard timeout, continue/fail-fast,
-partial/idempotent resume, read-only summarize, and malformed artifacts. Never
-commit `.runtime/`, `results/`, logs, caches, or worker products.
+## 环境
 
-## Environment
-
-Run the repository bootstrap from the repository root:
-
-~~~bash
+```bash
 ./bootstrap.sh
-~~~
-
-The script creates `.runtime/venv`, installs the locked dependencies, installs
-this repository as an editable package without resolving extra dependencies,
-validates the legacy GPU environment, verifies that `benchmark_engine` imports,
-and only then records the lock marker.
-
-Use either entry point:
-
-~~~bash
-.runtime/venv/bin/bench --help
 ./bench.sh --help
-~~~
+```
 
-The shell launcher clears external `PYTHONPATH` state and keeps uv, extension,
-FlashInfer, and XDG caches under `.runtime/cache`.
+`bootstrap.sh` 创建 `.runtime/venv`、安装锁定依赖、以 editable 方式安装当前仓库并验证
+legacy GPU 环境。`bench.sh` 清理外部 `PYTHONPATH`，把 uv、extension、FlashInfer 和
+XDG cache 固定到 `.runtime/cache`。
 
-## Verification
+## 提交前门禁
 
-Every phase should pass:
+每次变更至少运行：
 
-~~~bash
+```bash
 .runtime/venv/bin/python -m unittest discover -s tests -v
 ./run.sh check
 git diff --check
-~~~
+```
 
-Do not add generated runtime, cache, log, or benchmark result artifacts to Git.
-Do not change legacy command behavior as part of an engine-only change.
+修改 CUDA operator 时，还要在 B200 上运行该 operator 的 correctness 和 performance
+smoke。一次只使用一个正式 GPU benchmark 进程，并显式设置
+`CUDA_VISIBLE_DEVICES=0`。
 
-Phase 5 execution tests are Linux-sensitive because they validate sessions,
-signals, process groups, segfault classification, and recursive child cleanup:
+不得提交 `.runtime/`、`results/`、日志、缓存、bytecode 或 JIT/build 产物。通用引擎
+变更不得改变旧 `run.sh` 语义；算子迁移也不得通过放宽 reference、case、容差、门禁或
+测试来通过。
 
-~~~bash
-.runtime/venv/bin/python -m unittest -v \
-  tests/test_worker_protocol.py \
-  tests/test_controller_isolation.py \
-  tests/test_worker_failures.py \
-  tests/test_event_log.py
-~~~
+## 测试分层
 
-Keep fixture timeouts short and always allow the controller to perform its
-TERM/KILL/reap cleanup. Fixtures belong under `tests/fixtures/workers/`; never
-place crash/hang fixtures in the production operator registry.
+- Registry/manifest/selector/planning：CPU 单元和 contract tests；
+- Worker/Controller：真实子进程，覆盖协议、超时、signal、process group 和日志上限；
+- Correctness：输入隔离、output normalization、各 Comparator、确定性与失败诊断；
+- Performance：timer、采样次序、统计、cost model、GPU lock 和 gate；
+- Reporting：schema、原子写入、主键冲突、resume、summary 和 compare；
+- Operator：manifest/spec 契约、semantic oracle、control candidate 和 GPU smoke。
 
-Phase 6 correctness algorithms have a CPU-only mandatory suite:
+Linux-sensitive execution tests 必须使用短 timeout，并允许 Controller 完成
+TERM/KILL/reap。Crash/hang fixtures 放在 `tests/fixtures/workers/`，不得放入生产
+operator registry。
 
-~~~bash
+CPU correctness 专项可用：
+
+```bash
 .runtime/venv/bin/python -m unittest -v \
   tests/test_input_bundle.py \
   tests/test_output_normalization.py \
@@ -67,8 +53,12 @@ Phase 6 correctness algorithms have a CPU-only mandatory suite:
   tests/test_topk_comparator.py \
   tests/test_quantized_comparator.py \
   tests/test_correctness_evaluator.py
-~~~
+```
 
-The evaluator test contains a real CUDA allocation/synchronization smoke when
-CUDA is available and otherwise skips only that method. Correctness unit tests
-must not require a GPU.
+## 修改稳定协议
+
+Controller/Worker wire、manifest 和 CSV 都是版本化协议。新增字段时同步修改模型、严格
+解析、writer/reader、文档和 round-trip/legacy tests。未知字段不得被静默忽略；breaking
+change 必须升级 schema version。禁止使用 pickle 传输 candidate、tensor 或 callable。
+
+新增 operator 的推荐改动面见 [代码实现导读](implementation.md)。

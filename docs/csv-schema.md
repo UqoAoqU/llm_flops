@@ -32,6 +32,14 @@ String enums are closed sets and are validated on both write and read:
 Unknown enum strings are schema errors rather than forward-compatible values;
 adding an outcome therefore requires an explicit compatible schema update.
 
+`results.status` is the overall job outcome after combining requested stages:
+`passed` means every required gate passed; `failed` is a completed gate failure;
+`skipped` means policy intentionally did not run the job/stage; `unsupported`
+means the implementation explicitly cannot serve the case; `error`, `timeout`,
+`oom`, and `crashed` identify execution failures. `planned` and `running` are
+non-terminal lifecycle values. Use `correctness_status` and
+`performance_status` to identify which stage produced the overall outcome.
+
 The controller is the sole writer. Each completed case/sample is persisted by
 rewriting a same-directory temporary file, flushing and fsyncing it, then using
 `os.replace()`. Repeating an identical primary key and row is idempotent;
@@ -105,7 +113,7 @@ samples remain separate so statistics can be recalculated later.
 | `implementation_role` | string enum (`reference` or `candidate`) | required |
 | `reference_dtype`, `candidate_dtype` | compact JSON object | normalized output path to dtype; required for new rows, empty only in migrated v1/v2 rows |
 | `reference_shape`, `candidate_shape` | compact JSON object | normalized output path to shape array; required for new rows, empty only in migrated v1/v2 rows |
-| `sample_index`, `inner_iterations`, `order_index` | integer | required |
+| `sample_index`, `inner_iterations`, `order_index` | integer | required; `order_index` is global execution order, not rank |
 | `elapsed_ms`, `per_call_ms` | number | required |
 | `requested_timer`, `effective_timer` | string | required |
 | `fallback_reason` | string | empty unless auto selection fell back |

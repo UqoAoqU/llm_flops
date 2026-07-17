@@ -8,5 +8,5 @@ Correctness requires byte-exact FP8 codes, explicitly bounded weight error,
 and bounded downstream `fp8_value * weight` error. Dequantization is performed
 by `spec.normalize_output` after the timed call. The private SGLang JIT cache is
 materialized during worker import (`import_ms`), never during steady samples.
-The Phase 11 control candidate is a byte-identical copy of this implementation,
+The control candidate is a byte-identical copy of this implementation,
 so its expected performance ratio is approximately 1x.

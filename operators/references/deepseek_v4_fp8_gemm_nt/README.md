@@ -25,11 +25,11 @@ the logical values have been created.
 
 K and N are multiples of 128. The reference is the existing optimized
 DeepGEMM implementation: it consumes the aligned activation scale and writes a
-preallocated BF16 output. The candidate is the independently hashed,
-auditable PyTorch implementation: it expands the logical scales, explicitly
-dequantizes both FP8 inputs, performs a PyTorch matrix multiplication, and
-converts the result to BF16. It does not import DeepGEMM or a root benchmark
-module.
+preallocated BF16 output. The repository contains two useful candidate styles:
+an auditable PyTorch dequantize-and-matmul implementation, and a byte-identical
+DeepGEMM control copy used to validate the framework. The former includes
+dequantization in its timed body; the latter should pass correctness and
+measure approximately 1x.
 
 Correctness uses explicit `rtol=1e-2`, `atol=1e-1`, matching DeepGEMM's
 Blackwell FP8 GEMM validation.  This tolerance accounts for FP8 inputs,
@@ -59,15 +59,15 @@ Each raw CUDA Graph sample contains 20 calls because the reference latency is
 only tens of microseconds; this amortizes event noise without mixing import,
 first-call/JIT, warmup, or graph-build time into steady-state latency.
 
-This role convention applies to subsequent migrations: preserved optimized
-legacy code is the reference/baseline, while new or alternative code is a
-candidate. Consequently, the reference-to-candidate speedup may be below one
-and the Phase 9 regression gate may honestly reject this demonstrative PyTorch
-candidate even when correctness passes.
+The preserved optimized legacy code is the reference/baseline, while new,
+alternative, or control-copy code is a candidate. Consequently, the
+reference-to-candidate speedup may be below one and the regression gate may
+honestly reject the demonstrative PyTorch candidate even when correctness
+passes.
 
 The formal path requires CUDA, PyTorch FP8 E4M3, DeepGEMM and dimensions
 supported by the installed DeepGEMM build.  Multi-GPU scheduling and profiler
-integration are intentionally outside this migration.
+integration are not implemented by the engine.
 
 Validated command forms are:
 
