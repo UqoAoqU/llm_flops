@@ -4,8 +4,9 @@ DeepSeek V4 Pro Prefill、Decode 及各算子的 CUDA 性能测试。底层后�
 
 ## Benchmark Engine
 
-> Phase 9 status: correctness-gated `R-C-C-R` measurement, physical-GPU
-> locking, explicit performance gates, and strict artifact comparison are enabled.
+> Phase 11 status: correctness-gated `R-C-C-R` measurement, physical-GPU
+> locking, and strict artifact comparison now include the optimized SGLang
+> TopK and indexer FP8 quantization baselines.
 
 ### Five-minute CPU quick start
 
@@ -82,6 +83,35 @@ candidate is an independent PyTorch dequantize-and-matmul implementation.
 The microsecond-scale baseline uses 20 calls per captured graph sample to
 amortize event noise; import, first-call/JIT and graph-build costs remain
 separate artifact fields.
+
+### B200 TopK and indexer quant smoke
+
+The existing SGLang kernels are the optimized references. The candidates are
+byte-identical control copies of those references so this phase can validate
+registry, correctness, JIT staging, CUDA Graph timing, artifacts and gates
+without introducing an operator-implementation delta. Their expected speedup
+is approximately 1x. These CUDA commands remain separate from the CPU quick
+start:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 ./bench.sh validate --operator 'deepseek_v4_*'
+CUDA_VISIBLE_DEVICES=0 ./bench.sh run --suite smoke \
+  --operator deepseek_v4_topk_transform --candidate 'reference_control__*'
+CUDA_VISIBLE_DEVICES=0 ./bench.sh run --suite smoke \
+  --operator deepseek_v4_indexer_fp8_quant --candidate 'reference_control__*'
+CUDA_VISIBLE_DEVICES=0 ./bench.sh run --suite full --mode correctness \
+  --operator deepseek_v4_topk_transform \
+  --operator deepseek_v4_indexer_fp8_quant \
+  --candidate 'reference_control__*'
+CUDA_VISIBLE_DEVICES=0 ./bench.sh run --suite regression --mode all \
+  --operator deepseek_v4_topk_transform \
+  --operator deepseek_v4_indexer_fp8_quant \
+  --candidate 'reference_control__*' \
+  --tag representative
+```
+
+The contracts, legacy mapping and JIT boundaries are documented in the
+[TopK/indexer migration note](docs/deepseek-v4-topk-indexer-migration.md).
 
 新的 benchmark engine 正在与现有 DeepSeek V4 和 GLM-5 入口并行建设。
 当前 engine 提供可安装的 `benchmark_engine` 包、静态 Registry、确定性 dry-run

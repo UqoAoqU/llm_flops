@@ -7,7 +7,7 @@ cases:
   tags: [representative]
 mode: all
 candidates:
-  include: ["quickstart__*", "pytorch_dequant__*"]
+  include: ["quickstart__*", "pytorch_dequant__*", "reference_control__*"]
 correctness:
   seeds: [0, 1, 2]
 performance:

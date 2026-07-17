@@ -1,0 +1,22 @@
+schema_version: 1
+operator_id: deepseek_v4_topk_transform
+contract_version: 1
+description: SGLang DeepSeek V4 top-k selection followed by paged-index transform
+reference_entrypoint: implementation:operator
+spec_entrypoint: spec:SPEC
+device_types: [cuda]
+tags: [deepseek_v4, topk, indexer]
+correctness:
+  default_comparator: topk
+  determinism_repeats: 1
+performance:
+  timer: cuda_graph
+  graph_mode: enabled
+  warmup: 2
+  samples: 10
+  inner_iterations: 20
+  timeout_s: 1800
+  regression_threshold_pct: 5.0
+  max_cv: 0.15
+  gpu_lock_timeout_s: 600
+cost_model: spec:cost_model

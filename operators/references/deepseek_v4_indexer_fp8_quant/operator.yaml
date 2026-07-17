@@ -1,0 +1,22 @@
+schema_version: 1
+operator_id: deepseek_v4_indexer_fp8_quant
+contract_version: 1
+description: SGLang fused DeepSeek V4 indexer RoPE Hadamard FP8 quantization
+reference_entrypoint: implementation:operator
+spec_entrypoint: spec:SPEC
+device_types: [cuda]
+tags: [deepseek_v4, fp8, indexer, quantization]
+correctness:
+  default_comparator: quantized
+  determinism_repeats: 1
+performance:
+  timer: cuda_graph
+  graph_mode: enabled
+  warmup: 2
+  samples: 10
+  inner_iterations: 20
+  timeout_s: 1800
+  regression_threshold_pct: 5.0
+  max_cv: 0.15
+  gpu_lock_timeout_s: 600
+cost_model: spec:cost_model

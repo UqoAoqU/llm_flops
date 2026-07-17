@@ -1,10 +1,10 @@
 schema_version: 1
 suite_id: smoke
 operators:
-  include: ["example_cpu_add", "deepseek_v4_fp8_gemm_nt"]
+  include: ["example_cpu_add", "deepseek_v4_fp8_gemm_nt", "deepseek_v4_topk_transform", "deepseek_v4_indexer_fp8_quant"]
   exclude: []
 candidates:
-  include: ["quickstart__*", "pytorch_dequant__*"]
+  include: ["quickstart__*", "pytorch_dequant__*", "reference_control__*"]
 cases:
   tags: [smoke]
 mode: correctness

@@ -82,7 +82,9 @@ class EventEmitter:
         self.request = request
         self.started = time.monotonic() if started is None else started
         self._sequence = initial_sequence
-        self._lock = threading.Lock()
+        # heartbeat() re-enters emit() while holding this lock so the active
+        # stage check and append are one atomic lifecycle operation.
+        self._lock = threading.RLock()
         self._active_stage: WorkerStage | None = None
         self._stage_started = self.started
 
@@ -127,18 +129,19 @@ class EventEmitter:
             return value
 
     def heartbeat(self, log_tail: str) -> None:
+        encoded = log_tail.encode("utf-8", errors="replace")[-16 * 1024 :]
         with self._lock:
             stage = self._active_stage
-        if stage is None:
-            return
-        encoded = log_tail.encode("utf-8", errors="replace")[-16 * 1024 :]
-        self.emit(
-            EventName.HEARTBEAT,
-            stage,
-            "heartbeat",
-            child_pids=linux_descendant_pids(os.getpid()),
-            log_tail=encoded.decode("utf-8", errors="ignore"),
-        )
+            if stage is None:
+                return
+            child_pids = linux_descendant_pids(os.getpid())
+            self.emit(
+                EventName.HEARTBEAT,
+                stage,
+                "heartbeat",
+                child_pids=child_pids,
+                log_tail=encoded.decode("utf-8", errors="ignore"),
+            )
 
 
 __all__ = ["EventEmitter", "EventLog"]

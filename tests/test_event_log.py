@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -13,15 +14,110 @@ from benchmark_engine.execution import (
     StageTimeouts,
     WorkerController,
     WorkerOutcome,
+    WorkerStage,
     validate_event_sequence,
 )
-from benchmark_engine.execution.event_log import EventLog
+from benchmark_engine.execution.event_log import EventEmitter, EventLog
 
 from tests.worker_fixtures import make_job
 from tests.worker_fixtures import FIXTURE_ROOT
 
 
 class EventLogTests(unittest.TestCase):
+    def test_heartbeat_append_is_atomic_with_stage_finish(self) -> None:
+        class MemoryEventLog:
+            def __init__(self) -> None:
+                self.events = []
+
+            def append(self, event) -> None:
+                self.events.append(event)
+
+        job = make_job(Path.cwd() / "event-race-evaluation")
+        request = type(
+            "Request",
+            (),
+            {"identity": job.identity, "result_id": job.result_id},
+        )()
+        log = MemoryEventLog()
+        emitter = EventEmitter(log, request)
+        emitter.emit(EventName.DISCOVERED, WorkerStage.STARTUP, "discovered")
+        emitter.emit(EventName.WORKER_STARTED, WorkerStage.STARTUP, "started")
+        emitter.emit(EventName.IMPORT_STARTED, WorkerStage.IMPORT, "started")
+
+        original_emit = emitter.emit
+        heartbeat_entered = threading.Event()
+        release_heartbeat = threading.Event()
+        finished_started = threading.Event()
+        thread_errors = []
+
+        def coordinated_emit(event, stage, status, **kwargs):
+            if event is EventName.HEARTBEAT:
+                heartbeat_entered.set()
+                if not release_heartbeat.wait(2):
+                    raise TimeoutError("test did not release heartbeat")
+            return original_emit(event, stage, status, **kwargs)
+
+        emitter.emit = coordinated_emit
+
+        def heartbeat_target() -> None:
+            try:
+                emitter.heartbeat("still importing")
+            except BaseException as error:
+                thread_errors.append(error)
+
+        def finished_target() -> None:
+            try:
+                finished_started.set()
+                original_emit(
+                    EventName.IMPORT_FINISHED,
+                    WorkerStage.IMPORT,
+                    "success",
+                )
+            except BaseException as error:
+                thread_errors.append(error)
+
+        with patch(
+            "benchmark_engine.execution.event_log.linux_descendant_pids",
+            return_value=(),
+        ):
+            heartbeat = threading.Thread(target=heartbeat_target)
+            finished = threading.Thread(target=finished_target)
+            heartbeat.start()
+            self.assertTrue(heartbeat_entered.wait(1))
+            finished.start()
+            self.assertTrue(finished_started.wait(1))
+            # The FINISHED call has a full scheduling window. With the old
+            # Lock/check-then-emit implementation it completes here; with the
+            # RLock atomic section it is blocked until heartbeat is appended.
+            finished.join(timeout=0.2)
+            self.assertTrue(finished.is_alive())
+            release_heartbeat.set()
+            heartbeat.join(timeout=2)
+            finished.join(timeout=2)
+
+        self.assertFalse(heartbeat.is_alive())
+        self.assertFalse(finished.is_alive())
+        self.assertFalse(thread_errors, thread_errors)
+        for started, finished_event, stage in (
+            (EventName.BUILD_STARTED, EventName.BUILD_FINISHED, WorkerStage.BUILD),
+            (EventName.CORRECTNESS_STARTED, EventName.CORRECTNESS_FINISHED, WorkerStage.CORRECTNESS),
+            (EventName.WARMUP_STARTED, EventName.WARMUP_FINISHED, WorkerStage.WARMUP),
+            (EventName.SAMPLING_STARTED, EventName.SAMPLING_FINISHED, WorkerStage.SAMPLING),
+        ):
+            original_emit(started, stage, "started")
+            original_emit(finished_event, stage, "success")
+        original_emit(EventName.REPORT_WRITTEN, WorkerStage.REPORT, "success")
+        original_emit(EventName.WORKER_EXITED, WorkerStage.COMPLETE, "success")
+        self.assertEqual(
+            [event.event for event in log.events[2:5]],
+            [
+                EventName.IMPORT_STARTED,
+                EventName.HEARTBEAT,
+                EventName.IMPORT_FINISHED,
+            ],
+        )
+        validate_event_sequence(tuple(log.events))
+
     def test_all_stages_are_paired_and_unimplemented_stages_are_skipped(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary) / "evaluation"

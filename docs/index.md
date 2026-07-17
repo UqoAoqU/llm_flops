@@ -1,6 +1,6 @@
 # Benchmark Engine documentation
 
-Phase 9: [CLI and exit codes](cli.md), [correctness](correctness.md),
+Phase 11: [CLI and exit codes](cli.md), [correctness](correctness.md),
 [performance measurement](performance.md),
 [result/resume layout](result-layout.md), [troubleshooting](troubleshooting.md),
 [architecture](architecture.md), and [development](development.md).
@@ -11,6 +11,8 @@ deterministic plans, recoverable mirrored artifacts, isolated workers, and
 worker-local correctness semantics. Correctness and staged performance
 measurement are both connected to the CLI. Phase 9 adds fair interleaving,
 UUID GPU locks, formal gates, and strict comparisons.
+Phase 11 adds optimized SGLang TopK and indexer FP8 quantization references,
+byte-identical control candidates, and import-time JIT accounting.
 
 ## Guides
 
@@ -35,6 +37,9 @@ UUID GPU locks, formal gates, and strict comparisons.
   behavior.
 - [DeepSeek V4 FP8 GEMM migration](deepseek-v4-fp8-gemm-migration.md) records
   the first CUDA operator contract, legacy mapping, and timer parity check.
+- [DeepSeek V4 TopK/indexer migration](deepseek-v4-topk-indexer-migration.md)
+  records selection/tie/page semantics, FP8 quantization auditing, legacy
+  mapping, and the Ninja/PTXAS boundary.
 - [Contributing](../CONTRIBUTING.md) lists change and test expectations.
 
 Legacy benchmark commands remain documented in the [repository README](../README.md).

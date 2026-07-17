@@ -257,6 +257,10 @@ class CudaGraphTimer:
                 # replays that graph once, then divides by inner_iterations.
                 for _ in range(config.inner_iterations):
                     fn()
+            # CUDA may instantiate executable graph state lazily on the first
+            # replay. Charge exactly one untimed replay and its synchronization
+            # to graph preparation so no one-time setup enters raw samples.
+            graph.replay()
             cuda.synchronize()
             elapsed_ms = (self._clock() - started) * 1000.0
         except BaseException as error:

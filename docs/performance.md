@@ -27,6 +27,9 @@ samples, so resume does not repeat it.
 
 CUDA Event measures an ordinary eager launch with device events. CUDA Graph
 captures the complete inner loop once and measures one replay per raw sample.
+Immediately after capture, preparation performs one additional replay plus
+synchronization so lazy graph instantiation is charged to `graph_capture_ms`
+instead of the first steady-state sample.
 These human-readable names correspond to the canonical timer identifiers below.
 
 The canonical timer names are:

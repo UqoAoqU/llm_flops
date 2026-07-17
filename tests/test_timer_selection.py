@@ -140,8 +140,9 @@ class TimerSelectionTests(unittest.TestCase):
         )
         self.assertEqual(timer.prepare(kernel, TimerConfig(2, 3)), 1.0)
         self.assertEqual(calls, 3)
+        self.assertEqual(cuda.last_graph.replay_count, 1)
         samples = timer.sample(kernel, TimerConfig(2, 3))
-        self.assertEqual(cuda.last_graph.replay_count, 2)
+        self.assertEqual(cuda.last_graph.replay_count, 3)
         self.assertEqual([item.elapsed_ms for item in samples], [6.0, 6.0])
         self.assertEqual([item.per_call_ms for item in samples], [2.0, 2.0])
 
