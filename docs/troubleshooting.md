@@ -1,68 +1,63 @@
-# Troubleshooting managed workers
+# Troubleshooting
 
-GPU lock timeouts identify `.runtime/locks/<GPU UUID>.lock` and its owner.
-Never delete a lock whose PID may still exist; malformed or permission-protected
-metadata times out conservatively. Non-formal performance commonly means too
-few samples/high CV, role timer mismatch, opted-in correctness failure, or
-another compute process detected before sampling. Such raw samples are retained
-but never ranked.
+Start with the mirrored evaluation's `summary.md`, `logs/worker.jsonl`, bounded
+stdout/stderr, and diagnostics. Do not infer success from compiler activity or
+from a process that has not produced a terminal artifact.
 
-- Import failures: inspect `logs/stderr.log` and `diagnostics/*-import.txt`.
-- Candidate exceptions: correctness `error` plus a JSON diagnostic.
-- Hard timeout: the whole worker process group is terminated; later cases run by default.
-- Single-case diagnosis: copy the reproduction command from `bench summarize`.
-- Interrupted run: `./bench.sh run --resume RUN_ID`.
-- A correctness-only run records `performance_status=skipped` with
-  `skip_reason=correctness_only_mode`; this is not a performance pass.
+## Import, JIT, and build
 
-## A worker times out during import or build
+`worker.jsonl` identifies the active stage and heartbeat. Cold SGLang,
+FlashInfer, DeepGEMM, Ninja, NVCC, or PTXAS work may be long but belongs to
+import/build/first-call/graph-capture, never steady-state samples. A heartbeat
+does not extend the hard stage deadline.
 
-Inspect `logs/worker.jsonl` to identify the active stage and its heartbeat,
-then inspect `logs/stdout.log` and `logs/stderr.log`. A heartbeat indicates
-that the worker or compiler was observable; it does not extend the hard stage
-timeout. The controller terminates the complete process group, including
-Ninja/NVCC/PTXAS children, with TERM followed by KILL.
+If `Python.h`, `ninja`, `rustc`, `cargo`, or CUDA compiler tools are missing,
+repair the managed environment and rerun. Do not move JIT work into the timed
+candidate body or classify a compiler failure as unavailable performance.
 
-Increase a timeout only when the declared workload legitimately requires it.
-Do not disable the timeout or treat compiler output as a successful stage.
+## Timeout, OOM, crash, and interruption
 
-For SGLang references that materialize a private JIT cache while importing
-`implementation.py`, cold Ninja/PTXAS duration is reported as
-`import_ms`. TopK plan metadata, page tables, RoPE frequencies, positions and
-output storage are prepared before sampling. `first_call_ms`, `warmup_ms`,
-`graph_capture_ms` and steady samples remain distinct. An `import` heartbeat with
-an active `ninja` or `ptxas` child is expected on a cold cache. A compiler
-failure remains an import error, never a performance sample. Do not move these
-private JIT calls into candidate code or a timed operator.
+- `error`: structured Python/import/build exception;
+- `timeout`: independent stage deadline exceeded; process group is terminated;
+- `oom`: recognized CPU/CUDA out-of-memory condition;
+- `crashed`: signal/nonzero exit without a valid response;
+- `unsupported`: explicit unsupported contract/backend;
+- evaluation `interrupted`: Ctrl-C cleanup; CLI exits 130.
 
-## Outcome categories
+The Controller terminates spawned compiler children with the worker. Resume an
+interrupted normal run with `./bench.sh run --resume RUN_ID`. A legacy import
+has no execution state and cannot be resumed.
 
-- `error`: a structured Python/import/build exception.
-- `timeout`: a stage exceeded its independent hard deadline.
-- `oom`: `MemoryError` or a recognized CPU/CUDA out-of-memory diagnostic.
-- `crashed`: signal/nonzero exit without a valid structured response.
-- `unsupported`: an explicit `NotImplementedError` or unsupported backend.
-- `interrupted`: controller cleanup following Ctrl-C (CLI exit code 130).
+## GPU lock and noisy measurements
 
-The response error is intentionally short. Follow `diagnostic_path` for the
-full traceback or controller crash summary. A missing/invalid response is not
-silently converted to `unavailable`.
+GPU lock timeouts identify `.runtime/locks/<GPU UUID>.lock` and owner metadata.
+Never delete a lock while its PID may exist. A well-formed dead-owner lock is
+recoverable; malformed or permission-protected metadata is conservative.
 
-When a result is retried, inspect its numbered attempt files and the matching
-`DISCOVERED`-bounded event transcript. A response from an older attempt is
-never reused for the current process, including when the current worker dies
-before writing a structured response.
+Another compute process, timer-role mismatch, too few samples, high CV, failed
+correctness, or an opted-in failed-correctness measurement makes performance
+non-formal/non-rankable. Raw diagnostic samples remain visible. Re-run formal
+measurement only after the selected GPU is idle; never kill unrelated jobs.
 
-## Truncated output
+The B200 regression checks physical GPU 0's UUID before legacy measurement,
+between frameworks, and after engine measurement. A task on another GPU does
+not invalidate GPU 0, but any process on the recorded UUID does.
 
-Formal stdout/stderr files have a byte ceiling. A
-`[benchmark-engine: log truncated ...]` marker means the process produced more
-output than retained. Pipe draining continues after the marker, so truncation
-does not deadlock the worker. The controller summary tail is separately
-bounded.
+## Artifact errors
 
-## Security boundary
+CSV headers, versions, enum values, row semantics, primary keys, and finite
+numbers are strict. Same-key/different-row writes are conflicts. Atomic replace
+failure leaves the previous complete file. A multi-directory legacy import may
+publish earlier complete directories before a later rename fails; rerun the
+same command to validate/reuse complete directories and publish the rest.
 
-`start_new_session`, path validation, timeouts, and bounded logs provide
-failure isolation only. They are not a hostile-code sandbox. Run untrusted
-candidate code in a separately configured container or restricted account.
+Do not edit imported artifacts: their SHA-256 inventory and source-derived
+expected contents are checked on repeated import. A mismatch is a conflict,
+not an invitation to overwrite history.
+
+## Bounded logs and security
+
+A log truncation marker means the byte ceiling was reached; pipe draining
+continues to avoid deadlock. Failure isolation, path validation, timeouts, and
+bounded logs are not a hostile-code sandbox. Use an external restricted
+environment for untrusted candidate code.

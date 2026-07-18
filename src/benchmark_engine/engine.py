@@ -752,6 +752,7 @@ def _append_result(
         "reference_id": job.reference.implementation_id,
         "candidate_source_hash": job.candidate.source_hash,
         "reference_source_hash": job.reference.source_hash,
+        "imported_legacy": False,
         "environment_fingerprint": plan.environment_fingerprint,
         "device": _manifest_device(manifest.device_types),
         "gpu_name": gpu.get("name"),

@@ -120,11 +120,17 @@ def summarize_evaluation(path: Path) -> str:
     """Render a correctness summary without importing or executing code."""
 
     target = Path(path)
+    legacy_root = target if target.is_dir() else target.parent
+    legacy_import = (legacy_root / "legacy_import_manifest.json").is_file()
     if target.is_dir():
         target = target / RESULTS_SCHEMA.filename
     rows = AtomicCsvTable(target, RESULTS_SCHEMA).read_rows()
     if not rows:
         raise ValueError(f"results table contains no rows: {target}")
+    import_markers = {row.get("imported_legacy") == "true" for row in rows}
+    if len(import_markers) != 1:
+        raise ValueError(f"results table mixes normal and legacy rows: {target}")
+    legacy_import = legacy_import or True in import_markers
     counts: dict[str, int] = {}
     performance_counts: dict[str, int] = {}
     gate_counts: dict[str, int] = {}
@@ -136,7 +142,7 @@ def summarize_evaluation(path: Path) -> str:
         gate = row.get("performance_gate_status") or "legacy/unavailable"
         gate_counts[gate] = gate_counts.get(gate, 0) + 1
     lines = [
-        "# Correctness summary",
+        "# Imported legacy summary" if legacy_import else "# Correctness summary",
         "",
         f"- Total: {len(rows)}",
         f"- Passed: {counts.get('passed', 0)}",
@@ -147,6 +153,12 @@ def summarize_evaluation(path: Path) -> str:
         "## Status counts",
         "",
     ]
+    if legacy_import:
+        lines[2:2] = [
+            "- Imported legacy: true",
+            "- Correctness/source hashes/raw samples/CV/speedup: unavailable",
+            "- Ranking/resume/run-level discovery: disabled",
+        ]
     if set(performance_counts) == {"skipped"}:
         lines.insert(7, "- Legacy performance note: `performance_not_implemented` or correctness-only")
     lines.extend(f"- {name}: {counts[name]}" for name in sorted(counts))
@@ -161,7 +173,11 @@ def summarize_evaluation(path: Path) -> str:
     projection_rows = [dict(row, _seed=seeds.get(row["result_id"], "unknown"))
                        for row in projection_rows]
     lines.extend(("", *_projection_lines(projection_rows, complete_model=False)))
-    failures = [row for row in rows if row["correctness_status"] != "passed"]
+    failures = [
+        row for row in rows
+        if row["correctness_status"] != "passed"
+        and row.get("imported_legacy") != "true"
+    ]
     if failures:
         lines.extend(("", "## Failures", ""))
         for row in failures:

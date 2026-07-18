@@ -9,6 +9,7 @@ from typing import Mapping
 
 from .artifact_writer import RUN_INDEX_SCHEMA
 from .csv_writer import AtomicCsvTable, RESULTS_SCHEMA
+from .legacy_import import is_legacy_import_directory
 
 
 class CompareCompatibilityError(ValueError):
@@ -44,7 +45,18 @@ def _evaluation_paths(output_root: Path, selector: str, *, run: bool) -> tuple[P
 def _read(paths: tuple[Path, ...], *, include_candidate: bool) -> dict[tuple[str, ...], Mapping[str, str]]:
     result = {}
     for path in paths:
-        for row in AtomicCsvTable(path / RESULTS_SCHEMA.filename, RESULTS_SCHEMA).read_rows():
+        if is_legacy_import_directory(path):
+            raise CompareCompatibilityError(
+                f"legacy import is non-rankable and cannot be compared: {path}"
+            )
+        rows = AtomicCsvTable(
+            path / RESULTS_SCHEMA.filename, RESULTS_SCHEMA
+        ).read_rows()
+        if any(row.get("imported_legacy") == "true" for row in rows):
+            raise CompareCompatibilityError(
+                f"legacy import rows are non-rankable and cannot be compared: {path}"
+            )
+        for row in rows:
             key = (row["operator_id"], row["case_id"], row["seed"])
             if include_candidate:
                 key = (row["operator_id"], row["candidate_id"], row["case_id"], row["seed"])

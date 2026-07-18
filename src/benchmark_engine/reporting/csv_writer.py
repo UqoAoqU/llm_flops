@@ -63,6 +63,7 @@ class CsvSchema:
     version: int = CSV_SCHEMA_VERSION
     compatible_previous: tuple["CsvSchema", ...] = ()
     migrate_previous: Callable[[Mapping[str, object], int], Mapping[str, object]] | None = None
+    validate_row: Callable[[Mapping[str, str]], None] | None = None
 
     def __post_init__(self) -> None:
         names = self.fieldnames
@@ -134,6 +135,7 @@ RESULTS_FIELDNAMES = (
     "reference_id",
     "candidate_source_hash",
     "reference_source_hash",
+    "imported_legacy",
     "environment_fingerprint",
     "device",
     "gpu_name",
@@ -192,6 +194,7 @@ RESULTS_FIELDNAMES = (
     "reference_p95_ms",
     "reference_p99_ms",
     "reference_unstable",
+    "legacy_graph_ms",
     "candidate_mean_ms",
     "candidate_median_ms",
     "candidate_min_ms",
@@ -236,6 +239,7 @@ RESULTS_FIELDNAMES = (
 )
 
 _RESULTS_V2_FIELDNAMES = tuple(name for name in RESULTS_FIELDNAMES if name not in {
+    "imported_legacy", "legacy_graph_ms",
     "gpu_uuid", "logical_device", "visible_device", "cuda_visible_devices", "driver_version",
     "other_compute_processes_detected", "telemetry_error", "reference_requested_timer",
     "reference_effective_timer", "reference_timer_fallback_reason", "latency_delta_ms",
@@ -347,19 +351,15 @@ def _results_columns(names: tuple[str, ...]) -> tuple[CsvColumn, ...]:
                 "schema_version",
                 "run_id",
                 "evaluation_id",
-                "timestamp_utc",
                 "suite_id",
                 "mode",
                 "result_id",
                 "operator_id",
                 "contract_version",
                 "candidate_id",
-                "reference_id",
-                "candidate_source_hash",
-                "reference_source_hash",
+                "imported_legacy",
                 "environment_fingerprint",
                 "case_id",
-                "case_hash",
                 "seed",
                 "status",
                 "correctness_status",
@@ -407,6 +407,7 @@ def _results_columns(names: tuple[str, ...]) -> tuple[CsvColumn, ...]:
                 "reference_p90_ms",
                 "reference_p95_ms",
                 "reference_p99_ms",
+                "legacy_graph_ms",
                 "candidate_mean_ms",
                 "candidate_median_ms",
                 "candidate_min_ms",
@@ -435,7 +436,7 @@ def _results_columns(names: tuple[str, ...]) -> tuple[CsvColumn, ...]:
         booleans=frozenset(
             {"correctness_pass", "reference_unstable", "candidate_unstable",
              "performance_formal", "ranking_eligible", "perf_on_correctness_fail",
-             "other_compute_processes_detected"}
+             "other_compute_processes_detected", "imported_legacy"}
         ),
         allowed_values={key: value for key, value in {
             "mode": frozenset({"all", "correctness", "performance"}),
@@ -493,13 +494,136 @@ RESULTS_SCHEMA_V2 = CsvSchema(
     "results.csv", _results_columns(_RESULTS_V2_FIELDNAMES), ("result_id",), version=2,
 )
 
-RESULTS_SCHEMA = CsvSchema(
+RESULTS_SCHEMA_V3 = CsvSchema(
     "results.csv",
-    _results_columns(RESULTS_FIELDNAMES),
+    _results_columns(
+        tuple(
+            name
+            for name in RESULTS_FIELDNAMES
+            if name not in {"imported_legacy", "legacy_graph_ms"}
+        )
+    ),
     ("result_id",),
     version=3,
     compatible_previous=(RESULTS_SCHEMA_V1, RESULTS_SCHEMA_V2),
     migrate_previous=_migrate_results_v1,
+)
+
+
+def _validate_results_v4_row(row: Mapping[str, str]) -> None:
+    """Enforce provenance semantics beyond nullable column mechanics."""
+
+    imported = row.get("imported_legacy") == "true"
+    provenance = (
+        "timestamp_utc",
+        "reference_id",
+        "candidate_source_hash",
+        "reference_source_hash",
+        "case_hash",
+    )
+    if not imported:
+        missing = [name for name in provenance if not row.get(name)]
+        if missing:
+            raise CsvContractError(
+                "non-legacy results require provenance: " + ", ".join(missing)
+            )
+        if row.get("legacy_graph_ms"):
+            raise CsvContractError(
+                "non-legacy results must leave legacy_graph_ms empty"
+            )
+        return
+
+    allowed_populated = {
+        "schema_version", "run_id", "evaluation_id", "suite_id", "mode",
+        "result_id", "operator_id", "contract_version", "candidate_id",
+        "imported_legacy", "environment_fingerprint", "device", "case_id",
+        "seed", "tags", "input_summary", "status", "correctness_status",
+        "performance_status", "skip_reason", "timer", "requested_timer",
+        "effective_timer", "legacy_graph_ms", "performance_formal",
+        "ranking_eligible", "performance_gate_status", "performance_gate_reasons",
+        "perf_on_correctness_fail", "gate_unsupported_policy", "error_type",
+        "error_message",
+    }
+    unexpected = sorted(
+        name for name, value in row.items()
+        if value not in {None, ""} and name not in allowed_populated
+    )
+    if unexpected:
+        raise CsvContractError(
+            "legacy imports cannot populate unavailable fields: "
+            + ", ".join(unexpected)
+        )
+    expected = {
+        "suite_id": "legacy_import",
+        "mode": "performance",
+        "status": "skipped",
+        "correctness_status": "skipped",
+        "performance_status": "skipped",
+        "skip_reason": "imported_legacy_without_correctness_or_raw_samples",
+        "timer": "legacy_cuda_graph",
+        "requested_timer": "legacy_cuda_graph",
+        "effective_timer": "legacy_cuda_graph",
+        "performance_formal": "false",
+        "ranking_eligible": "false",
+        "performance_gate_status": "skipped",
+        "performance_gate_reasons": '["imported_legacy_non_rankable"]',
+        "perf_on_correctness_fail": "false",
+        "gate_unsupported_policy": "fail",
+    }
+    mismatches = [
+        f"{name}={row.get(name)!r}"
+        for name, value in expected.items()
+        if row.get(name) != value
+    ]
+    if mismatches:
+        raise CsvContractError(
+            "legacy imports are non-correctness and non-rankable: "
+            + ", ".join(mismatches)
+        )
+    graph_ms = row.get("legacy_graph_ms", "")
+    error_type = row.get("error_type", "")
+    if error_type not in {"", "legacy_unavailable"}:
+        raise CsvContractError(
+            "legacy error_type must be empty or legacy_unavailable"
+        )
+    unavailable = error_type == "legacy_unavailable"
+    if unavailable:
+        if graph_ms:
+            raise CsvContractError("unavailable legacy rows cannot contain legacy_graph_ms")
+    else:
+        if row.get("error_message"):
+            raise CsvContractError("executed legacy rows cannot contain error_message")
+        try:
+            graph_value = float(graph_ms)
+        except (TypeError, ValueError) as error:
+            raise CsvContractError("executed legacy rows require legacy_graph_ms") from error
+        if not math.isfinite(graph_value) or graph_value < 0:
+            raise CsvContractError("legacy_graph_ms must be finite and non-negative")
+
+
+def _migrate_results_to_v4(
+    row: Mapping[str, object], version: int
+) -> Mapping[str, object]:
+    if version in {1, 2}:
+        migrated = dict(_migrate_results_v1(row, version))
+    elif version == 3:
+        migrated = dict(row)
+    else:
+        raise CsvContractError(f"unsupported results.csv migration from v{version}")
+    migrated["schema_version"] = 4
+    migrated["imported_legacy"] = False
+    migrated["legacy_graph_ms"] = None
+    return migrated
+
+
+RESULTS_SCHEMA = CsvSchema(
+    "results.csv",
+    _results_columns(RESULTS_FIELDNAMES),
+    ("result_id",),
+    version=4,
+    compatible_previous=(RESULTS_SCHEMA_V1, RESULTS_SCHEMA_V2, RESULTS_SCHEMA_V3),
+    migrate_previous=_migrate_results_to_v4,
+    validate_row=_validate_results_v4_row,
 )
 
 CORRECTNESS_OUTPUTS_SCHEMA = CsvSchema(
@@ -852,6 +976,8 @@ class AtomicCsvTable:
                 _validate_stored_value(
                     column, row[column.name], f"{self.path}:{number}"
                 )
+            if source_schema.validate_row is not None:
+                source_schema.validate_row(row)
             key = tuple(row[name] for name in source_schema.primary_key)
             if key in seen:
                 raise CsvContractError(f"{self.path}:{number} duplicates key {key}")
@@ -951,10 +1077,13 @@ class AtomicCsvTable:
             raise CsvContractError(
                 f"schema_version must be {self.schema.version}"
             )
-        return {
+        normalised = {
             column.name: _normalise_value(column, candidate.get(column.name))
             for column in self.schema.columns
         }
+        if self.schema.validate_row is not None:
+            self.schema.validate_row(normalised)
+        return normalised
 
     def _key(self, row: Mapping[str, str]) -> tuple[str, ...]:
         return tuple(row[name] for name in self.schema.primary_key)
@@ -1009,5 +1138,6 @@ __all__ = [
     "RESULTS_SCHEMA",
     "RESULTS_SCHEMA_V1",
     "RESULTS_SCHEMA_V2",
+    "RESULTS_SCHEMA_V3",
     "atomic_write_text",
 ]

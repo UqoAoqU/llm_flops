@@ -30,10 +30,21 @@ from .csv_writer import (
 )
 from .summary import render_summary, summarize_evaluation, summarize_run
 from .compare import CompareCompatibilityError, compare_artifacts
+from .legacy_import import (
+    LEGACY_IMPORT_MANIFEST_SCHEMA_VERSION,
+    LegacyImportConflictError,
+    LegacyImportError,
+    LegacyImportManifest,
+    LegacyImportReport,
+    convert_legacy_csv,
+    is_legacy_import_directory,
+    read_legacy_manifest,
+)
 
 __all__ = [
     "CSV_SCHEMA_VERSION",
     "MANIFEST_SCHEMA_VERSION",
+    "LEGACY_IMPORT_MANIFEST_SCHEMA_VERSION",
     "ArtifactError",
     "ArtifactExistsError",
     "ArtifactWriter",
@@ -48,6 +59,10 @@ __all__ = [
     "EvaluationState",
     "HISTORY_SCHEMA",
     "ManifestContractError",
+    "LegacyImportConflictError",
+    "LegacyImportError",
+    "LegacyImportManifest",
+    "LegacyImportReport",
     "MODEL_PROJECTION_SCHEMA",
     "PERFORMANCE_SAMPLES_SCHEMA",
     "RESULTS_SCHEMA",
@@ -60,5 +75,8 @@ __all__ = [
     "summarize_evaluation",
     "summarize_run",
     "compare_artifacts",
+    "convert_legacy_csv",
+    "is_legacy_import_directory",
+    "read_legacy_manifest",
     "validate_resume_compatibility",
 ]

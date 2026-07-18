@@ -1,6 +1,6 @@
 # DeepSeek V4 sparse prefill attention
 
-This operator preserves the legacy `flash_mla_sparse_fwd(q, kv, indices,
+The reference preserves the legacy `flash_mla_sparse_fwd(q, kv, indices,
 scale, d_v)` call. C4/C128 context relationships are explicit case metadata;
 the representative legacy case uses M=1024 and the uncompressed 65,536-token
 cache.

@@ -1,162 +1,91 @@
 # CSV schemas
 
-The Python authority is
-`benchmark_engine.reporting.csv_writer`; this document defines the persisted
-contract for readers and future evaluators.
+`benchmark_engine.reporting.csv_writer` is authoritative. CSV files are UTF-8
+RFC 4180 with CRLF records. `schema_version` is first; empty is the only null;
+booleans are lowercase; numbers must be finite. Writers validate the complete
+row, fsync a same-directory temporary file, and atomically replace the table.
+Identical primary-key rows are idempotent; different content is a conflict.
 
-The current format uses schema version **3** for both `results.csv` and
-`performance_samples.csv`; `correctness_outputs.csv`, run indexes, and history
-remain schema version **1**. Exact valid v1/v2 results and performance-sample
-headers are read and atomically upgraded on first append. Unknown headers are
-rejected; missing provenance is explicitly marked and legacy rows are never ranked.
+## Versions
 
-All tables are UTF-8 comma-separated RFC 4180 files with a header and CRLF
-record terminators. `schema_version` is always the first column. Writers
-preserve the column order below. An empty field is
-the only null representation: zero, `false`, and an empty JSON array are real
-values and must not stand in for unavailable data. Booleans are lower-case
-`true`/`false`; numbers are finite base-10 values; timestamps are UTC strings.
-JSON-valued strings use compact JSON when populated.
+- `results.csv`: v4;
+- `performance_samples.csv`: v3;
+- correctness, projection, run index, and history: v1.
 
-String enums are closed sets and are validated on both write and read:
+Valid results v1/v2/v3 and samples v1/v2 are read through explicit migration.
+The next append atomically writes the current header. Results migrated from
+v1-v3 receive `imported_legacy=false`; old missing gate provenance remains
+non-rankable. Unknown headers or enum values are rejected.
 
-- `results.mode`: `all`, `correctness`, `performance`;
-- `results.status`: `planned`, `running`, `passed`, `failed`, `skipped`,
-  `unsupported`, `error`, `timeout`, `oom`, `crashed`;
-- `results.correctness_status`: `planned`, `passed`, `failed`, `skipped`,
-  `unsupported`, `error`, `timeout`, `oom`, `crashed`;
-- `results.performance_status`: the correctness values above plus `unstable`;
-- `performance_samples.implementation_role`: `reference`, `candidate`;
-- `history.status`: `complete` only.
+## results.csv v4
 
-Unknown enum strings are schema errors rather than forward-compatible values;
-adding an outcome therefore requires an explicit compatible schema update.
+One row summarizes one operator/candidate/case/seed; primary key `result_id`.
+Stable groups are:
 
-`results.status` is the overall job outcome after combining requested stages:
-`passed` means every required gate passed; `failed` is a completed gate failure;
-`skipped` means policy intentionally did not run the job/stage; `unsupported`
-means the implementation explicitly cannot serve the case; `error`, `timeout`,
-`oom`, and `crashed` identify execution failures. `planned` and `running` are
-non-terminal lifecycle values. Use `correctness_status` and
-`performance_status` to identify which stage produced the overall outcome.
+- identity: run/evaluation/result/operator/candidate/reference IDs, contract,
+  source hashes, environment, case/hash/seed/tags/input summary;
+- outcomes: overall, correctness, performance, skip/error/diagnostic fields;
+- timers: requested/effective/fallback plus import, build, first call, warmup,
+  graph capture, steady-state, and reference equivalents;
+- statistics: mean/median/min/max/percentiles/population stddev/CV per role;
+- fairness/gates: formal/ranking flags, reasons, resolved thresholds, telemetry;
+- cost and memory: FLOPs, bytes, arithmetic intensity, throughput, allocated,
+  reserved, and workspace bytes;
+- `legacy_graph_ms`: the only aggregate latency admitted from the old
+  `graph_ms` CSV path.
 
-The controller is the sole writer. Each completed case/sample is persisted by
-rewriting a same-directory temporary file, flushing and fsyncing it, then using
-`os.replace()`. Repeating an identical primary key and row is idempotent;
-reusing the key with different data is a conflict and never overwrites the old
-row. Breaking changes require a new schema version.
+Closed status enums are defined in `benchmark_engine.models`. `passed` means
+all requested formal gates passed; `skipped` is policy/non-execution;
+`unsupported`, `error`, `timeout`, `oom`, and `crashed` remain distinct.
 
-## `results.csv`
+### imported_legacy contract
 
-One row is the summary of one `operator × candidate × case × seed`. Its
-primary key is `result_id`.
+`imported_legacy` is required. For normal rows it is `false`, and timestamp,
+reference ID, source hashes, and case hash remain mandatory through row-level
+validation; `legacy_graph_ms` must be empty.
 
-| Fields (stable order) | Type | Null rule |
-|---|---|---|
-| `schema_version` | integer | required, always `3` |
-| `run_id`, `evaluation_id`, `timestamp_utc`, `suite_id`, `mode` | string | required |
-| `result_id`, `operator_id`, `candidate_id`, `reference_id` | string | required |
-| `contract_version` | integer | required |
-| `candidate_source_hash`, `reference_source_hash` | string | required |
-| `environment_fingerprint` | string | required |
-| `device`, `gpu_name`, `cuda_version`, `torch_version` | string | empty when unavailable |
-| `case_id`, `case_hash` | string | required |
-| `seed` | integer | required |
-| `tags`, `input_summary` | JSON string | empty when unavailable |
-| `status`, `correctness_status`, `performance_status` | string enum | required |
-| `skip_reason` | string | empty unless skipped |
-| `correctness_pass` | boolean | empty until evaluated |
-| `failed_output_count`, `mismatch_count` | integer | empty until evaluated |
-| `max_abs_error`, `max_rel_error`, `rmse`, `rel_l2`, `cosine_similarity`, `mismatch_rate` | number | empty when not applicable |
-| `timer`, `requested_timer`, `effective_timer`, `timer_fallback_reason` | string | empty when performance was not run; fallback reason empty unless selection changed |
-| `import_ms`, `build_ms`, `first_call_ms`, `warmup_ms`, `graph_capture_ms`, `steady_state_ms` and reference-prefixed stage fields | number | empty when not measured |
-| reference/candidate mean, median, min, max, p50, p90, p95, p99, population stddev and CV fields | number | empty when not measured |
-| `reference_unstable`, `candidate_unstable`, `instability_reason` | boolean/string | empty when not measured |
-| `speedup`, `slowdown_pct`, `latency_delta_ms` | number | finite measured values or empty |
-| formal/ranking booleans, gate status/reasons, resolved gate policy | boolean/string/number | new rows required; legacy rows migrate non-rankable |
-| `tflops`, `effective_bandwidth_gbps`, `flops`, `estimated_bytes`, `arithmetic_intensity`, `throughput` | number | empty when no theoretical cost model applies |
-| allocated/reserved peak memory and `workspace_bytes` | integer | empty when unavailable |
-| `error_type`, `error_message`, `diagnostic_path`, `stdout_path`, `stderr_path` | string | empty on success |
-| `profile_path` | string | reserved and empty while profiler support is excluded |
+For `true` rows the v4 validator, on append, append-many, read, and migration
+output, requires:
 
-The exact flat order is the order shown across table rows, left to right within
-each field list. Full tracebacks and mismatch samples belong in diagnostics,
-not `error_message`.
+- suite `legacy_import`, mode `performance`;
+- overall/correctness/performance all `skipped` with the fixed import reason;
+- implementation source hashes, reference ID, case hash, timestamp empty;
+- formal/ranking false and performance gate skipped;
+- no correctness metrics, stage timings, raw-derived statistics/CV, speedup,
+  cost model, memory/workspace, GPU/toolchain claims, or diagnostics;
+- executed legacy data has one finite non-negative `legacy_graph_ms`;
+  unavailable legacy data has no latency and `error_type=legacy_unavailable`.
 
-## `correctness_outputs.csv`
+The old `graph_ms` value is one CUDA Graph replay average per call. It is not
+renamed to median and never creates `performance_samples.csv` rows.
 
-One row describes one normalized output leaf. Its primary key is
-`(result_id, output_path)`.
+## correctness_outputs.csv v1
 
-| Fields (stable order) | Type | Null rule |
-|---|---|---|
-| `schema_version` | integer | required, always `1` |
-| `result_id`, `output_path`, `comparator` | string | required |
-| `reference_dtype`, `candidate_dtype` | string | required |
-| `reference_shape`, `candidate_shape` | JSON string | required |
-| `rtol`, `atol` | number | empty when comparator has no tolerance |
-| `passed` | boolean | required |
-| `max_abs_error`, `mean_abs_error`, `p95_abs_error`, `max_rel_error`, `rmse`, `rel_l2`, `cosine_similarity`, `mismatch_rate` | number | empty when not computable |
-| `mismatch_count`, `reference_nan_count`, `candidate_nan_count` | integer | empty when not computable |
-| `diagnostic_path` | string | empty when no detailed diagnostic exists |
+Primary key `(result_id, output_path)`. It records comparator, reference and
+candidate dtype/shape, tolerance, pass flag, error metrics, NaN/mismatch counts,
+and diagnostic path. Legacy imports contain only the header.
 
-## `performance_samples.csv`
+## performance_samples.csv v3
 
-One row is one raw timing sample. Its primary key is
-`(result_id, implementation_role, sample_index)`. Reference and candidate
-samples remain separate so statistics can be recalculated later.
+Primary key `(result_id, implementation_role, sample_index)`. Every row records
+reference/candidate role, both normalized dtype/shape maps, sample and inner
+iteration counts, elapsed/per-call milliseconds, global `order_index`, timer
+selection/fallback, and optional telemetry. `order_index` is execution order,
+not performance rank. Legacy imports contain only the header.
 
-| Fields (stable order) | Type | Null rule |
-|---|---|---|
-| `schema_version` | integer | required, always `3` |
-| `result_id` | string | required |
-| `implementation_role` | string enum (`reference` or `candidate`) | required |
-| `reference_dtype`, `candidate_dtype` | compact JSON object | normalized output path to dtype; required for new rows, empty only in migrated v1/v2 rows |
-| `reference_shape`, `candidate_shape` | compact JSON object | normalized output path to shape array; required for new rows, empty only in migrated v1/v2 rows |
-| `sample_index`, `inner_iterations`, `order_index` | integer | required; `order_index` is global execution order, not rank |
-| `elapsed_ms`, `per_call_ms` | number | required |
-| `requested_timer`, `effective_timer` | string | required |
-| `fallback_reason` | string | empty unless auto selection fell back |
-| `gpu_clock_mhz`, `memory_clock_mhz`, `temperature_c`, `power_w` | number | empty when telemetry is unavailable; never fake zero |
+## model_projection.csv v1
 
-Each timing sample covers one complete operator invocation, so the four
-contract columns are JSON objects rather than one row per output leaf. Keys are
-the same normalized `output_path` values used by `correctness_outputs.csv` and
-are emitted in sorted order. For example,
-`{"output":{"logits":"float32"}}` is not used; the dtype representation is
-the flat map `{"output.logits":"float32"}`, while the corresponding shape map
-may be `{"output.logits":[2,128]}`.
+Primary key `(result_id, adapter_id, implementation_role)`. Projection keeps
+phase/profile/model input/context, adapter/backend/kind/legacy shape/instances,
+per-call latency, projected model latency, status, and reason. For legacy
+imports, `legacy_shape` is a stable JSON object containing the exact source CSV
+`input_shape` and `output_shape`, plus nullable current-mapping `logical_shape`.
+Formal engine
+projection derives from candidate median. Legacy import projection preserves
+the old aggregate as explicitly non-formal data.
 
-## `model_projection.csv`
+## Indexes
 
-Projection rows are derived from per-call medians; raw samples and
-`results.csv` remain unchanged. The primary key is
-`(result_id, adapter_id, implementation_role)`. Stable columns are:
-
-`schema_version, run_id, evaluation_id, result_id, suite_id, projection_id,
-phase, quant_profile, model_input, raw_context, operator_id, candidate_id,
-case_id, adapter_id, display_name, backend, kind, legacy_shape, instances,
-implementation_role, per_call_ms, projected_model_ms, status, reason`.
-
-`projected_model_ms` is exactly `per_call_ms * instances` and exists only for
-`measured` rows. Other statuses are `correctness_failed`, `unsupported`,
-`unavailable`, and `not_measured`; blank timing fields represent missing data.
-The table is atomic and precedes the `results.csv` completion marker. Resume
-atomically replaces stale projection rows for an incomplete `result_id`.
-
-Run summaries join mirrored evaluations via `run_index.csv`. Expected but
-missing adapters are reported from the model mapping and never synthesized as
-zero-time rows.
-
-## Index CSVs
-
-`results/run_index.csv` has the stable order `schema_version, run_id,
-operator_id, candidate_id, evaluation_id, relative_path`. Its primary key is
-the first four identity fields after the schema version and it contains no case
-data.
-
-Each candidate `history.csv` has the stable order `schema_version,
-evaluation_id, run_id, operator_id, candidate_id, status, completed_at_utc,
-relative_path, suite_id, mode, reference_source_hash,
-candidate_source_hash, environment_fingerprint`. Its primary key is
-`evaluation_id`, and it contains only complete evaluations.
+`run_index.csv` maps a run to mirrored evaluations. Candidate `history.csv`
+and `latest.json` publish complete normal evaluations. Legacy imports write
+none of these, so run summarize/resume/compare cannot discover them.

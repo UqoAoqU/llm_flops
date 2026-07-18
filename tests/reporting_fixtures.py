@@ -60,6 +60,7 @@ def results_row(result_id: str = "res_0123456789abcdef0123456789abcdef") -> dict
         "reference_id": "reference",
         "candidate_source_hash": "c" * 64,
         "reference_source_hash": "b" * 64,
+        "imported_legacy": False,
         "environment_fingerprint": ENVIRONMENT,
         "case_id": "case_0",
         "case_hash": "d" * 64,
