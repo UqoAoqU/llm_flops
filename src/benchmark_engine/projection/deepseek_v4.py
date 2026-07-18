@@ -59,6 +59,7 @@ _DECODE = (
 
 class DeepSeekV4Projection:
     projection_id = "deepseek_v4_pro"
+    display_name = "DeepSeek V4 Pro"
 
     def mappings(self, phase: str, quant_profile: str) -> tuple[ProjectionMapping, ...]:
         if quant_profile != FP8_PROFILE:

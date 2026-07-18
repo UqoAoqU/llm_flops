@@ -1,0 +1,15 @@
+schema_version: 1
+suite_id: glm5_smoke
+operators:
+  include: ["glm5_dsa_indexer", "glm5_dsa_projection", "glm5_dsa_index_score", "glm5_dsa_sparse_attention", "glm5_dsa_unified_sparse_attention", "glm5_moe_grouped_gemm", "glm5_moe_masked_grouped_gemm"]
+  exclude: []
+candidates:
+  include: ["reference_control__*"]
+cases:
+  tags: [glm5_smoke]
+mode: correctness
+correctness:
+  seeds: [0]
+performance:
+  samples: 3
+  inner_iterations: 1

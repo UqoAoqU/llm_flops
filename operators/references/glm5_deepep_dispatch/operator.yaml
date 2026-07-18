@@ -1,0 +1,26 @@
+schema_version: 1
+operator_id: glm5_deepep_dispatch
+contract_version: 1
+description: Explicit unsupported contract for the 8-GPU GLM-5 DeepEP dispatch benchmark
+reference_entrypoint: implementation:operator
+spec_entrypoint: spec:SPEC
+device_types: [cuda]
+tags: [glm5, deepep, distributed, multi_gpu, unsupported, legacy]
+correctness:
+  default_comparator: exact
+  rtol: 0.0
+  atol: 0.0
+  equal_nan: false
+  determinism_repeats: 1
+performance:
+  timer: cuda_event
+  graph_mode: disabled
+  warmup: 10
+  samples: 30
+  inner_iterations: 1
+  timeout_s: 1800
+  regression_threshold_pct: 10.0
+  max_cv: 0.15
+  unsupported_policy: fail
+  gpu_lock_timeout_s: 600
+cost_model: spec:cost_model

@@ -79,6 +79,15 @@ class SuiteSchemaTest(unittest.TestCase):
             ):
                 self.parse(text)
 
+    def test_empty_performance_inherits_operator_measurement_shape(self):
+        inherited = self.parse(
+            VALID.replace("performance:\n  samples: 3\n  inner_iterations: 1",
+                          "performance: {}")
+        )
+        self.assertIsNone(inherited.performance_samples)
+        self.assertIsNone(inherited.performance_inner_iterations)
+        self.assertIsNone(inherited.performance_timer)
+
 
 if __name__ == "__main__":
     unittest.main()

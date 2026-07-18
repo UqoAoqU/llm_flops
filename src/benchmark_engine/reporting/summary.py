@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 
 from benchmark_engine.ids import validate_run_id
-from benchmark_engine.projection import DEEPSEEK_V4_PROJECTION
+from benchmark_engine.projection import projection_for_id
 
 from .csv_writer import AtomicCsvTable, MODEL_PROJECTION_SCHEMA, RESULTS_SCHEMA
 
@@ -15,70 +15,81 @@ from .csv_writer import AtomicCsvTable, MODEL_PROJECTION_SCHEMA, RESULTS_SCHEMA
 def _projection_lines(rows: list[dict[str, str]], *, complete_model: bool) -> list[str]:
     if not rows:
         return ["## Model projection", "", "- Status: unavailable (no projection artifact)", ""]
-    lines = ["## DeepSeek V4 Pro model projection", ""]
-    groups = sorted({(row["phase"], row["quant_profile"], int(row["model_input"]),
-                      int(row["raw_context"]), row.get("_seed", "unknown"),
-                      row.get("evaluation_id", "unknown"))
-                     for row in rows})
-    for phase, profile, model_input, context, seed, evaluation_id in groups:
-        selected = [row for row in rows
-                    if (row["phase"], row["quant_profile"], int(row["model_input"]),
-                        int(row["raw_context"]), row.get("_seed", "unknown"),
-                        row.get("evaluation_id", "unknown"))
-                    == (phase, profile, model_input, context, seed, evaluation_id)]
-        expected = DEEPSEEK_V4_PROJECTION.mappings(phase, profile)
-        candidates = {mapping.adapter_id: sorted(
-            (row for row in selected if row["implementation_role"] == "candidate"
-             and row["adapter_id"] == mapping.adapter_id),
-            key=lambda row: (row["candidate_id"], row.get("result_id", "")),
-        ) for mapping in expected}
-        references = {mapping.adapter_id: sorted(
-            (row for row in selected if row["implementation_role"] == "reference"
-             and row["adapter_id"] == mapping.adapter_id),
-            key=lambda row: (row["candidate_id"], row.get("result_id", "")),
-        ) for mapping in expected}
-        lines.extend((f"### {phase} / {profile} / input={model_input} / context={context} / seed={seed} / evaluation={evaluation_id}", "",
-                      "| Operator | Candidate | Backend | Instances | Candidate ms/call | Candidate model-ms | Status |",
-                      "|---|---|---|---:|---:|---:|---|"))
-        candidate_total = 0.0
-        reference_total = 0.0
-        missing = []
-        unavailable = []
-        ambiguous = []
-        for mapping in expected:
-            candidate_rows = candidates[mapping.adapter_id]
-            reference_rows = references[mapping.adapter_id]
-            candidate_ids = sorted({row["candidate_id"] for row in candidate_rows})
-            candidate_label = ", ".join(candidate_ids) if candidate_ids else "-"
-            if not candidate_rows:
-                status = "missing" if complete_model else "not in this evaluation"
-                call_ms = model_ms = "-"
-                missing.append(mapping.display_name)
-            elif len(candidate_rows) != 1:
-                status = "ambiguous"
-                call_ms = model_ms = "-"
-                ambiguous.append(f"{mapping.display_name} ({candidate_label})")
-            else:
-                row = candidate_rows[0]
-                status = row["status"] + ((f": {row['reason']}") if row.get("reason") else "")
-                call_ms = row.get("per_call_ms") or "-"
-                model_ms = row.get("projected_model_ms") or "-"
-                if row["status"] == "measured" and row.get("projected_model_ms"):
-                    candidate_total += float(row["projected_model_ms"])
+    lines = []
+    projection_ids = sorted({row.get("projection_id") or "deepseek_v4_pro" for row in rows})
+    for projection_id in projection_ids:
+        projection = projection_for_id(projection_id)
+        projection_rows = [row for row in rows
+                           if (row.get("projection_id") or "deepseek_v4_pro") == projection_id]
+        if projection is None:
+            lines.extend((f"## {projection_id} model projection", "",
+                          f"- Status: unavailable (unknown projection_id `{projection_id}`)", ""))
+            continue
+        display_name = getattr(projection, "display_name", projection_id)
+        lines.extend((f"## {display_name} model projection", ""))
+        groups = sorted({(row["phase"], row["quant_profile"], int(row["model_input"]),
+                          int(row["raw_context"]), row.get("_seed", "unknown"),
+                          row.get("evaluation_id", "unknown"))
+                         for row in projection_rows})
+        for phase, profile, model_input, context, seed, evaluation_id in groups:
+            selected = [row for row in projection_rows
+                        if (row["phase"], row["quant_profile"], int(row["model_input"]),
+                            int(row["raw_context"]), row.get("_seed", "unknown"),
+                            row.get("evaluation_id", "unknown"))
+                        == (phase, profile, model_input, context, seed, evaluation_id)]
+            expected = projection.mappings(phase, profile)
+            candidates = {mapping.adapter_id: sorted(
+                (row for row in selected if row["implementation_role"] == "candidate"
+                 and row["adapter_id"] == mapping.adapter_id),
+                key=lambda row: (row["candidate_id"], row.get("result_id", "")),
+            ) for mapping in expected}
+            references = {mapping.adapter_id: sorted(
+                (row for row in selected if row["implementation_role"] == "reference"
+                 and row["adapter_id"] == mapping.adapter_id),
+                key=lambda row: (row["candidate_id"], row.get("result_id", "")),
+            ) for mapping in expected}
+            lines.extend((f"### {phase} / {profile} / input={model_input} / context={context} / seed={seed} / evaluation={evaluation_id}", "",
+                          "| Operator | Candidate | Backend | Instances | Candidate ms/call | Candidate model-ms | Status |",
+                          "|---|---|---|---:|---:|---:|---|"))
+            candidate_total = 0.0
+            reference_total = 0.0
+            missing = []
+            unavailable = []
+            ambiguous = []
+            for mapping in expected:
+                candidate_rows = candidates[mapping.adapter_id]
+                reference_rows = references[mapping.adapter_id]
+                candidate_ids = sorted({row["candidate_id"] for row in candidate_rows})
+                candidate_label = ", ".join(candidate_ids) if candidate_ids else "-"
+                if not candidate_rows:
+                    status = "missing" if complete_model else "not in this evaluation"
+                    call_ms = model_ms = "-"
+                    missing.append(mapping.display_name)
+                elif len(candidate_rows) != 1:
+                    status = "ambiguous"
+                    call_ms = model_ms = "-"
+                    ambiguous.append(f"{mapping.display_name} ({candidate_label})")
                 else:
-                    unavailable.append(f"{mapping.display_name} ({row['status']})")
-                # Reference rows are paired with candidate evaluations. Count
-                # only the unique pair; ambiguous candidates must not select
-                # or duplicate a reference measurement.
-                if len(reference_rows) == 1 and reference_rows[0]["status"] == "measured" \
-                        and reference_rows[0].get("projected_model_ms"):
-                    reference_total += float(reference_rows[0]["projected_model_ms"])
-            lines.append(f"| {mapping.display_name} | {candidate_label} | {mapping.backend} | {mapping.instances} | {call_ms} | {model_ms} | {status} |")
-        lines.extend(("", f"- Candidate measured partial total: {candidate_total:.6f} ms/model",
-                      f"- Reference measured partial total: {reference_total:.6f} ms/model",
-                      f"- Missing operators: {', '.join(missing) if missing else 'none'}",
-                      f"- Unavailable/unsupported: {', '.join(unavailable) if unavailable else 'none'}",
-                      f"- Ambiguous candidates: {', '.join(ambiguous) if ambiguous else 'none'}", ""))
+                    row = candidate_rows[0]
+                    status = row["status"] + ((f": {row['reason']}") if row.get("reason") else "")
+                    call_ms = row.get("per_call_ms") or "-"
+                    model_ms = row.get("projected_model_ms") or "-"
+                    if row["status"] == "measured" and row.get("projected_model_ms"):
+                        candidate_total += float(row["projected_model_ms"])
+                    else:
+                        unavailable.append(f"{mapping.display_name} ({row['status']})")
+                    # Reference rows are paired with candidate evaluations. Count
+                    # only the unique pair; ambiguous candidates must not select
+                    # or duplicate a reference measurement.
+                    if len(reference_rows) == 1 and reference_rows[0]["status"] == "measured" \
+                            and reference_rows[0].get("projected_model_ms"):
+                        reference_total += float(reference_rows[0]["projected_model_ms"])
+                lines.append(f"| {mapping.display_name} | {candidate_label} | {mapping.backend} | {mapping.instances} | {call_ms} | {model_ms} | {status} |")
+            lines.extend(("", f"- Candidate measured partial total: {candidate_total:.6f} ms/model",
+                          f"- Reference measured partial total: {reference_total:.6f} ms/model",
+                          f"- Missing operators: {', '.join(missing) if missing else 'none'}",
+                          f"- Unavailable/unsupported: {', '.join(unavailable) if unavailable else 'none'}",
+                          f"- Ambiguous candidates: {', '.join(ambiguous) if ambiguous else 'none'}", ""))
     return lines
 
 

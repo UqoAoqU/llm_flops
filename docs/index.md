@@ -24,6 +24,7 @@ The root [README](../README.md) contains the shortest runnable example.
 - [Architecture](architecture.md) and [implementation guide](implementation.md).
 - [Result layout](result-layout.md) and [CSV schema](csv-schema.md).
 - [Legacy llm_flops migration](migration-llm-flops.md).
+- [GLM-5 migration and coverage](glm5-migration.md).
 - [Legacy launchers](legacy-launchers.md).
 - [Development](development.md) and [contributing](../CONTRIBUTING.md).
 

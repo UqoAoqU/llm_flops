@@ -1,0 +1,25 @@
+schema_version: 1
+operator_id: glm5_dsa_sparse_attention
+contract_version: 1
+description: GLM-5 FlashMLA sparse attention migrated from dsa_flashmla.py
+reference_entrypoint: implementation:operator
+spec_entrypoint: spec:SPEC
+device_types: [cuda]
+tags: [glm5, dsa, attention, flashmla, legacy]
+correctness:
+  default_comparator: floating
+  rtol: 0.02
+  atol: 0.2
+  equal_nan: false
+  determinism_repeats: 1
+performance:
+  timer: cuda_graph
+  graph_mode: enabled
+  warmup: 5
+  samples: 20
+  inner_iterations: 1
+  timeout_s: 1800
+  regression_threshold_pct: 10.0
+  max_cv: 0.15
+  gpu_lock_timeout_s: 600
+cost_model: spec:cost_model

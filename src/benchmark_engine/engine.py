@@ -35,7 +35,7 @@ from .suite import load_suite
 from .ids import generate_result_id
 from .performance import PerformanceGateConfig, evaluate_performance_gate
 from .execution.gpu_lock import GpuLock, resolve_gpu_identity
-from .projection import DEEPSEEK_V4_PROJECTION
+from .projection import projection_for_case
 
 
 PERFORMANCE_SKIP_REASON = "performance_not_implemented"
@@ -852,7 +852,7 @@ def _append_result(
         "stdout_path": "logs/stdout.log",
         "stderr_path": "logs/stderr.log",
     }
-    projection_mapping = DEEPSEEK_V4_PROJECTION.mapping_for_case(
+    projection, projection_mapping = projection_for_case(
         job.identity.operator_id, job.case
     )
     projection_rows: list[dict[str, object]] = []
@@ -867,7 +867,7 @@ def _append_result(
             projection_rows.append({
                 "run_id": job.identity.run_id, "evaluation_id": job.identity.evaluation_id,
                 "result_id": job.result_id, "suite_id": plan.suite_id,
-                "projection_id": DEEPSEEK_V4_PROJECTION.projection_id,
+                "projection_id": projection.projection_id,
                 "phase": str(symbols["phase"]), "quant_profile": str(symbols["quant_profile"]),
                 "model_input": int(symbols["model_input"]), "raw_context": int(symbols["raw_context"]),
                 "operator_id": job.identity.operator_id, "candidate_id": job.identity.candidate_id,

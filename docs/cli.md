@@ -61,6 +61,22 @@ CUDA_VISIBLE_DEVICES=0 ./bench.sh run --suite deepseek_v4_prefill
 CUDA_VISIBLE_DEVICES=0 ./bench.sh run --suite deepseek_v4_decode
 ```
 
+`glm5_smoke` selects bounded correctness cases for every supported single-GPU
+GLM-5 family. `glm5_regression` adds formal performance sampling. The quoted
+glob is expanded by the benchmark selector rather than the shell:
+
+```bash
+./bench.sh validate --operator 'glm5_*'
+CUDA_VISIBLE_DEVICES=0 ./bench.sh run --suite glm5_smoke
+CUDA_VISIBLE_DEVICES=0 ./bench.sh run --suite glm5_regression
+```
+
+`glm5_deepep_dispatch` validates and lists normally, but its cases are explicit
+multi-GPU `unsupported` entries and are not selected by these single-GPU
+suites. The GLM regression suite inherits each operator's timer and graph
+inner-iteration settings, including the separate legacy/unified sparse and MoE
+contracts. See [GLM-5 migration](glm5-migration.md).
+
 ## Summarize and compare
 
 ```bash

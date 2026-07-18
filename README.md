@@ -157,6 +157,28 @@ Run the predeclared B200 comparison only on an idle physical GPU 0:
 The execution form removes `--dry-run`. Thresholds and evidence requirements
 are fixed in [the migration guide](docs/migration-llm-flops.md).
 
+## GLM-5 operators
+
+The five legacy single-operator entries and both unified GLM-5 single-GPU
+scripts are available through discoverable contracts:
+
+```bash
+./bench.sh validate --operator 'glm5_*'
+CUDA_VISIBLE_DEVICES=0 ./bench.sh run --suite glm5_smoke
+CUDA_VISIBLE_DEVICES=0 ./bench.sh run --suite glm5_regression
+```
+
+The prefill/decode mappings cover all thirteen legacy rows. DeepEP is visible
+as `glm5_deepep_dispatch` but explicitly unsupported because the legacy script
+requires eight GPUs and distributed collective state; it is not included in
+single-GPU suites or ranking. See the [GLM-5 migration and coverage
+matrix](docs/glm5-migration.md).
+
+Legacy sparse attention and contiguous MoE use separate operator IDs from the
+unified-script sparse and masked-MoE rows. This preserves their different CUDA
+graph/event and inner-iteration timing contracts; suites do not override those
+per-operator settings.
+
 ## Exit codes
 
 - `0`: command completed and every requested gate passed;
@@ -174,6 +196,7 @@ are fixed in [the migration guide](docs/migration-llm-flops.md).
 - [Correctness](docs/correctness.md) and [performance](docs/performance.md)
 - [CSV schema](docs/csv-schema.md) and [result layout](docs/result-layout.md)
 - [Legacy migration and B200 regression](docs/migration-llm-flops.md)
+- [GLM-5 migration and coverage](docs/glm5-migration.md)
 - [Test tiers](docs/testing.md) and [troubleshooting](docs/troubleshooting.md)
 - [Legacy launchers](docs/legacy-launchers.md)
 

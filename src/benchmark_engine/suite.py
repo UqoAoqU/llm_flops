@@ -28,8 +28,8 @@ class SuiteConfig:
     case_tags: tuple[str, ...]
     mode: str
     correctness_seeds: tuple[int, ...]
-    performance_samples: int
-    performance_inner_iterations: int
+    performance_samples: int | None
+    performance_inner_iterations: int | None
     candidate_include: tuple[str, ...] = ("*",)
     performance_warmup: int | None = None
     performance_timer: str | None = None
@@ -134,20 +134,12 @@ def load_suite(path: Path) -> SuiteConfig:
     correctness = _mapping(root["correctness"], path, "correctness")
     _fields(correctness, path, "correctness", frozenset({"seeds"}))
     performance = _mapping(root["performance"], path, "performance")
-    performance_required = frozenset({"samples", "inner_iterations"})
-    missing_performance = performance_required.difference(performance)
+    performance_fields = frozenset({"samples", "inner_iterations"})
     unknown_performance = set(performance).difference(
-        performance_required | {"warmup", "timer", "perf_on_correctness_fail",
-                                "min_speedup", "max_slowdown_pct", "max_candidate_median_ms", "max_cv",
-                                "max_memory_bytes", "unsupported_policy", "gpu_lock_timeout_s"}
+        performance_fields | {"warmup", "timer", "perf_on_correctness_fail",
+                              "min_speedup", "max_slowdown_pct", "max_candidate_median_ms", "max_cv",
+                              "max_memory_bytes", "unsupported_policy", "gpu_lock_timeout_s"}
     )
-    if missing_performance:
-        _fail(
-            "missing_field",
-            path,
-            "performance",
-            f"missing {', '.join(sorted(missing_performance))}",
-        )
     if unknown_performance:
         _fail(
             "unknown_field",
@@ -219,14 +211,14 @@ def load_suite(path: Path) -> SuiteConfig:
         case_tags=_strings(cases["tags"], path, "cases.tags"),
         mode=mode,
         correctness_seeds=seeds,
-        performance_samples=_integer(
-            performance["samples"], path, "performance.samples", positive=True
+        performance_samples=(
+            None if "samples" not in performance else
+            _integer(performance["samples"], path, "performance.samples", positive=True)
         ),
-        performance_inner_iterations=_integer(
-            performance["inner_iterations"],
-            path,
-            "performance.inner_iterations",
-            positive=True,
+        performance_inner_iterations=(
+            None if "inner_iterations" not in performance else
+            _integer(performance["inner_iterations"], path,
+                     "performance.inner_iterations", positive=True)
         ),
         candidate_include=candidate_include,
         performance_warmup=performance_warmup,
