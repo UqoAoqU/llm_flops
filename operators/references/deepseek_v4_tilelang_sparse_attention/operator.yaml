@@ -1,0 +1,25 @@
+schema_version: 1
+operator_id: deepseek_v4_tilelang_sparse_attention
+contract_version: 1
+description: DeepSeek V4 Flash MODEL1 FP8 sparse attention with gfx942 TileLang-to-Triton fallback
+reference_entrypoint: implementation:operator
+spec_entrypoint: spec:SPEC
+device_types: [cuda]
+tags: [deepseek_v4_flash, rocm, gfx942, tilelang, triton_fallback, sparse_attention, kv_cache, high_priority]
+correctness:
+  default_comparator: floating
+  rtol: 0.02
+  atol: 0.08
+  equal_nan: false
+  determinism_repeats: 1
+performance:
+  timer: auto
+  graph_mode: auto
+  warmup: 5
+  samples: 30
+  inner_iterations: 20
+  timeout_s: 2400
+  regression_threshold_pct: 5.0
+  max_cv: 0.15
+  gpu_lock_timeout_s: 600
+cost_model: spec:cost_model

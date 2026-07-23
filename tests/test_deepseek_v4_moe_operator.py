@@ -303,8 +303,8 @@ class Phase14ContractTests(unittest.TestCase):
 
     def test_suite_dry_runs_add_exact_prefill_and_decode_jobs(self):
         for suite, expected, phase in (
-            ("deepseek_v4_prefill", 36, "prefill"),
-            ("deepseek_v4_decode", 24, "decode"),
+            ("deepseek_v4_prefill", 17, "prefill"),
+            ("deepseek_v4_decode", 17, "decode"),
         ):
             stdout, stderr = io.StringIO(), io.StringIO()
             with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
@@ -312,8 +312,13 @@ class Phase14ContractTests(unittest.TestCase):
             self.assertEqual(code, 0, stderr.getvalue())
             jobs = json.loads(stdout.getvalue())["jobs"]
             self.assertEqual(len(jobs), expected)
-            moe_jobs = [job for job in jobs if job["identity"]["operator_id"] == OPERATOR]
-            self.assertEqual(len(moe_jobs), 3 if phase == "prefill" else 2)
+            moe_jobs = [
+                job
+                for job in jobs
+                if job["identity"]["operator_id"]
+                == "deepseek_v4_aiter_fp8_fused_moe"
+            ]
+            self.assertEqual(len(moe_jobs), 2)
             self.assertEqual({job["case"]["symbols"]["phase"] for job in moe_jobs}, {phase})
 
 

@@ -1,0 +1,25 @@
+schema_version: 1
+operator_id: deepseek_v4_fused_qk_norm_rope_store
+contract_version: 1
+description: Fused Q/K RMSNorm, RoPE, and FP8 SWA cache store for DeepSeek V4 Flash
+reference_entrypoint: implementation:operator
+spec_entrypoint: spec:SPEC
+device_types: [cuda]
+tags: [deepseek_v4_flash, rocm, gfx942, sglang_jit, norm, rope, kv_cache, high_priority]
+correctness:
+  default_comparator: floating
+  rtol: 0.01
+  atol: 0.03
+  equal_nan: false
+  determinism_repeats: 1
+performance:
+  timer: auto
+  graph_mode: auto
+  warmup: 5
+  samples: 30
+  inner_iterations: 20
+  timeout_s: 1800
+  regression_threshold_pct: 5.0
+  max_cv: 0.15
+  gpu_lock_timeout_s: 600
+cost_model: spec:cost_model

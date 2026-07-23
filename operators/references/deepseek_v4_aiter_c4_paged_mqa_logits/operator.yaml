@@ -1,0 +1,25 @@
+schema_version: 1
+operator_id: deepseek_v4_aiter_c4_paged_mqa_logits
+contract_version: 1
+description: AITER preshuffled C4 FP8 paged-MQA index logits for DeepSeek V4 Flash
+reference_entrypoint: implementation:operator
+spec_entrypoint: spec:SPEC
+device_types: [cuda]
+tags: [deepseek_v4_flash, rocm, gfx942, aiter, indexer, paged_mqa, high_priority]
+correctness:
+  default_comparator: floating
+  rtol: 0.02
+  atol: 0.5
+  equal_nan: false
+  determinism_repeats: 1
+performance:
+  timer: auto
+  graph_mode: auto
+  warmup: 5
+  samples: 30
+  inner_iterations: 20
+  timeout_s: 1800
+  regression_threshold_pct: 5.0
+  max_cv: 0.15
+  gpu_lock_timeout_s: 600
+cost_model: spec:cost_model

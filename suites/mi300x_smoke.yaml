@@ -1,15 +1,22 @@
 schema_version: 1
 suite_id: mi300x_smoke
 operators:
-  include: ["example_rocm_bf16_gemm"]
+  include:
+    - "example_rocm_bf16_gemm"
+    - "deepseek_v4_aiter_block_fp8_gemm"
+    - "deepseek_v4_fused_qk_norm_rope_store"
+    - "deepseek_v4_c4_c128_compressor"
+    - "deepseek_v4_aiter_c4_paged_mqa_logits"
+    - "deepseek_v4_tilelang_sparse_attention"
+    - "deepseek_v4_aiter_fp8_fused_moe"
   exclude: []
 candidates:
-  include: ["reference_control__20260723T000000Z__942bf160"]
+  include: ["reference_control__*"]
 cases:
-  tags: [smoke, representative]
+  tags: [smoke]
 mode: all
 correctness:
-  seeds: [942]
+  seeds: [0]
 performance:
   timer: auto
   warmup: 5

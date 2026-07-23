@@ -23,5 +23,6 @@ export TORCH_EXTENSIONS_DIR="$ROOT/.runtime/cache/torch_extensions"
 export FLASHINFER_WORKSPACE_BASE="$ROOT/.runtime/cache/flashinfer"
 export XDG_CACHE_HOME="$ROOT/.runtime/cache/xdg"
 export TRITON_CACHE_DIR="$ROOT/.runtime/cache/triton"
+export AITER_CONFIG_DIR="$ROOT/.runtime/cache/aiter"
 
 exec "$VENV/bin/python" -m benchmark_engine "$@"

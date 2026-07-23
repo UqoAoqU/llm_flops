@@ -1,0 +1,25 @@
+schema_version: 1
+operator_id: deepseek_v4_c4_c128_compressor
+contract_version: 1
+description: DeepSeek V4 Flash C4/C128 stateful compressor primitive
+reference_entrypoint: implementation:operator
+spec_entrypoint: spec:SPEC
+device_types: [cuda]
+tags: [deepseek_v4_flash, rocm, gfx942, sglang_jit, compressor, stateful, high_priority]
+correctness:
+  default_comparator: floating
+  rtol: 0.005
+  atol: 0.005
+  equal_nan: false
+  determinism_repeats: 1
+performance:
+  timer: auto
+  graph_mode: auto
+  warmup: 5
+  samples: 30
+  inner_iterations: 20
+  timeout_s: 1800
+  regression_threshold_pct: 5.0
+  max_cv: 0.15
+  gpu_lock_timeout_s: 600
+cost_model: spec:cost_model

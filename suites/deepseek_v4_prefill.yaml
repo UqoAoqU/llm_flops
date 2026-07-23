@@ -1,7 +1,13 @@
 schema_version: 1
 suite_id: deepseek_v4_prefill
 operators:
-  include: ["deepseek_v4_fp8_gemm_nt", "deepseek_v4_indexer_fp8_quant", "deepseek_v4_fp8_paged_mqa_logits", "deepseek_v4_topk_transform", "deepseek_v4_sparse_prefill_attention", "deepseek_v4_trtllm_fp8_mxfp8_moe"]
+  include:
+    - "deepseek_v4_aiter_block_fp8_gemm"
+    - "deepseek_v4_fused_qk_norm_rope_store"
+    - "deepseek_v4_c4_c128_compressor"
+    - "deepseek_v4_aiter_c4_paged_mqa_logits"
+    - "deepseek_v4_tilelang_sparse_attention"
+    - "deepseek_v4_aiter_fp8_fused_moe"
   exclude: []
 candidates:
   include: ["test_impl__*", "reference_control__*"]
@@ -12,6 +18,5 @@ correctness:
   seeds: [0]
 performance:
   warmup: 5
-  samples: 20
-  inner_iterations: 1
-  timer: auto
+  samples: 30
+  inner_iterations: 20

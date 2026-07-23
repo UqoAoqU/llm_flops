@@ -37,9 +37,11 @@ export TORCH_EXTENSIONS_DIR="$RUNTIME/cache/torch_extensions"
 export FLASHINFER_WORKSPACE_BASE="$RUNTIME/cache/flashinfer"
 export XDG_CACHE_HOME="$RUNTIME/cache/xdg"
 export TRITON_CACHE_DIR="$RUNTIME/cache/triton"
+export AITER_CONFIG_DIR="$RUNTIME/cache/aiter"
 
 mkdir -p "$RUNTIME/logs" "$UV_CACHE_DIR" "$TORCH_EXTENSIONS_DIR" \
-  "$FLASHINFER_WORKSPACE_BASE" "$XDG_CACHE_HOME" "$TRITON_CACHE_DIR"
+  "$FLASHINFER_WORKSPACE_BASE" "$XDG_CACHE_HOME" "$TRITON_CACHE_DIR" \
+  "$AITER_CONFIG_DIR"
 touch "$LOG"
 exec > >(tee -a "$LOG") 2>&1
 

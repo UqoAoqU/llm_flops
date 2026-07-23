@@ -38,19 +38,27 @@ class DeepSeekV4ProjectionTests(unittest.TestCase):
         )
 
     def test_prefill_and_decode_suites_expand_real_phase_shapes(self):
-        expected = {
-            "deepseek_v4_prefill": ((1024, 2048, 4096), 36, "prefill"),
-            "deepseek_v4_decode": ((16, 32), 24, "decode"),
+        high_priority = {
+            "deepseek_v4_aiter_block_fp8_gemm": 2,
+            "deepseek_v4_fused_qk_norm_rope_store": 2,
+            "deepseek_v4_c4_c128_compressor": 4,
+            "deepseek_v4_aiter_c4_paged_mqa_logits": 2,
+            "deepseek_v4_tilelang_sparse_attention": 5,
+            "deepseek_v4_aiter_fp8_fused_moe": 2,
         }
-        for suite, (inputs, job_count, phase) in expected.items():
+        for suite, phase in (
+            ("deepseek_v4_prefill", "prefill"),
+            ("deepseek_v4_decode", "decode"),
+        ):
             with self.subTest(suite=suite):
                 plan = self._plan(suite)
-                self.assertEqual(len(plan.jobs), job_count)
+                self.assertEqual(len(plan.jobs), sum(high_priority.values()))
                 self.assertEqual({job.case.symbols["phase"] for job in plan.jobs}, {phase})
-                self.assertEqual({job.case.symbols["model_input"] for job in plan.jobs}, set(inputs))
-                self.assertEqual({job.case.symbols["raw_context"] for job in plan.jobs}, {65536})
-                self.assertEqual({job.case.symbols["quant_profile"] for job in plan.jobs}, {"fp8_mxfp8"})
-                self.assertTrue(all("projection_adapter_id" in job.case.symbols for job in plan.jobs))
+                actual = {}
+                for job in plan.jobs:
+                    operator_id = job.identity.operator_id
+                    actual[operator_id] = actual.get(operator_id, 0) + 1
+                self.assertEqual(actual, high_priority)
 
     def test_projection_registry_is_a_lossless_legacy_adapter_mapping(self):
         legacy = _legacy()
