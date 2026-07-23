@@ -712,6 +712,8 @@ def _append_result(
     gpu = gpu if isinstance(gpu, Mapping) else {}
     gpu_runtime = raw_performance.get("gpu_runtime")
     gpu_runtime = gpu_runtime if isinstance(gpu_runtime, Mapping) else {}
+    accelerator = environment_snapshot.get("accelerator")
+    accelerator = accelerator if isinstance(accelerator, Mapping) else {}
     gate = evaluate_performance_gate(
         raw_performance,
         PerformanceGateConfig(
@@ -759,10 +761,25 @@ def _append_result(
         "gpu_uuid": gpu_runtime.get("gpu_uuid"),
         "logical_device": gpu_runtime.get("logical_device"),
         "visible_device": gpu_runtime.get("visible_device"),
+        "visible_devices": json.dumps(
+            gpu_runtime.get("visible_devices", {}), sort_keys=True
+        ),
         "cuda_visible_devices": gpu_runtime.get("cuda_visible_devices"),
         "driver_version": gpu_runtime.get("driver_version"),
         "other_compute_processes_detected": gpu_runtime.get("other_compute_processes_detected"),
         "telemetry_error": gpu_runtime.get("telemetry_error"),
+        "accelerator_backend": (
+            gpu_runtime.get("accelerator_backend")
+            or accelerator.get("backend")
+        ),
+        "accelerator_runtime_version": (
+            gpu_runtime.get("accelerator_runtime_version")
+            or accelerator.get("runtime")
+        ),
+        "gpu_arch": gpu_runtime.get("gpu_arch") or gpu.get("arch"),
+        "gpu_identity_resolution": gpu_runtime.get(
+            "gpu_identity_resolution"
+        ),
         "cuda_version": environment_snapshot.get("cuda"),
         "torch_version": _environment_package_version(environment_snapshot, "torch"),
         "case_id": job.case.case_id,
@@ -986,7 +1003,7 @@ def execute_plan(
             cuda_devices = _manifest_cuda_devices(operator_manifest.device_types)
             gpu_lock = None
             if cuda_devices and job.mode in {"all", "performance"}:
-                identity = resolve_gpu_identity(0, allow_torch_fallback=False)
+                identity = resolve_gpu_identity(0, allow_torch_fallback=True)
                 repository_root = job.reference.root.parents[2]
                 gpu_lock = GpuLock(
                     repository_root / ".runtime" / "locks", identity,

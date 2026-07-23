@@ -1,39 +1,38 @@
 {
-  "schema_version": 1,
-  "python": "3.12",
-  "cuda": "13.0",
+  "schema_version": 2,
+  "python": "3.11",
+  "accelerator": {
+    "backend": "rocm",
+    "runtime_prefix": "7.0"
+  },
   "gpu": {
-    "capability": [10, 0],
-    "name_contains": "B200"
+    "arch_prefix": "gfx942",
+    "name_contains": "AMD Radeon Graphics",
+    "count": 8
   },
   "source": {
     "sglang": {
-      "package": "sglang",
-      "url": "https://github.com/sgl-project/sglang.git",
-      "commit": "19593359971ebc3582a74f000bf285488d993362",
-      "subdirectory": "python"
+      "root_env": "SGLANG_ROOT",
+      "commit": "85fd90072d1a9f2432842b03588f63b745e524e4",
+      "dirty": true,
+      "diff_sha256": "be81f7d070f7d17e38196d2c12ea85353b51529ce1af825e598179c86c0b9278"
+    },
+    "aiter": {
+      "root_env": "AITER_ROOT",
+      "commit": "6d0304e8ce88bddef4ec875bdd844804fd631089",
+      "dirty": true,
+      "diff_sha256": "23f8dba6cd44e09543dabc37e3b0aac220167b00bfd0afa874892d799ab97806"
     }
   },
   "packages": {
-    "flashinfer-cubin": {"version": "0.6.12", "module": "flashinfer_cubin"},
-    "flashinfer-python": {"version": "0.6.12", "module": "flashinfer"},
-    "nvidia-cutlass-dsl": {"version": "4.5.2", "module": "cutlass"},
-    "sgl-deep-gemm": {"version": "0.1.4", "module": "deep_gemm"},
     "pyyaml": {"version": "6.0.3", "module": "yaml"},
-    "sglang": {"version": null, "module": "sglang"},
-    "sglang-kernel": {"version": "0.4.4", "module": "sgl_kernel"},
-    "torch": {"version": "2.11.0", "module": "torch"}
+    "torch": {"version": "2.10.0+rocm7.0", "module": "torch"}
   },
   "required_symbols": [
-    "deep_gemm.fp8_gemm_nt",
-    "deep_gemm.fp8_fp4_paged_mqa_logits",
-    "deep_gemm.fp8_paged_mqa_logits",
-    "flashinfer.mxfp8_quantize",
-    "flashinfer.fused_moe.trtllm_fp4_block_scale_routed_moe",
-    "flashinfer.fused_moe.trtllm_fp8_block_scale_routed_moe",
-    "sgl_kernel.flash_mla.flash_mla_sparse_fwd",
-    "sgl_kernel.flash_mla.flash_mla_with_kvcache",
-    "sglang.jit_kernel.dsv4.fused_q_indexer_rope_hadamard_fp4_quant",
-    "sglang.jit_kernel.dsv4.fused_q_indexer_rope_hadamard_quant"
+    "torch.cuda.Event",
+    "torch.cuda.CUDAGraph",
+    "torch.cuda.graph",
+    "torch.mm",
+    "yaml.safe_load"
   ]
 }

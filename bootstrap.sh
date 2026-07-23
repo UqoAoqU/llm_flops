@@ -3,34 +3,53 @@ set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 RUNTIME="$ROOT/.runtime"
-VENV="$ROOT/.runtime/venv"
-LOG="$ROOT/.runtime/logs/bootstrap.log"
+VENV="$RUNTIME/venv"
+LOG="$RUNTIME/logs/bootstrap.log"
 LOCK="$ROOT/requirements/benchmark-lock.json"
-MARKER="$ROOT/.runtime/installed.lock"
-PYTHON="${PYTHON:-/usr/bin/python3.12}"
+MARKER="$RUNTIME/installed.lock"
+ENV_FILE="${AGENT4KERNEL_ENV:-$HOME/.config/agent4kernel/env.sh}"
+
+if [[ ! -r "$ENV_FILE" ]]; then
+  echo "ERROR: MI300X environment file is not readable: $ENV_FILE" >&2
+  exit 2
+fi
 
 unset PYTHONPATH
-export UV_CACHE_DIR="$ROOT/.runtime/cache/uv"
-export TORCH_EXTENSIONS_DIR="$ROOT/.runtime/cache/torch_extensions"
-export FLASHINFER_WORKSPACE_BASE="$ROOT/.runtime/cache/flashinfer"
+# shellcheck source=/dev/null
+source "$ENV_FILE"
+
+for name in GPU_VENV SGLANG_ROOT AITER_ROOT; do
+  if [[ -z "${!name:-}" ]]; then
+    echo "ERROR: $name is not defined by $ENV_FILE" >&2
+    exit 2
+  fi
+done
+
+PYTHON="$GPU_VENV/bin/python"
+if [[ ! -x "$PYTHON" ]]; then
+  echo "ERROR: ROCm Python is unavailable: $PYTHON" >&2
+  exit 2
+fi
+
+export PYTHONPATH="$ROOT/src:$SGLANG_ROOT/python:$AITER_ROOT"
+export UV_CACHE_DIR="$RUNTIME/cache/uv"
+export TORCH_EXTENSIONS_DIR="$RUNTIME/cache/torch_extensions"
+export FLASHINFER_WORKSPACE_BASE="$RUNTIME/cache/flashinfer"
+export XDG_CACHE_HOME="$RUNTIME/cache/xdg"
+export TRITON_CACHE_DIR="$RUNTIME/cache/triton"
 
 mkdir -p "$RUNTIME/logs" "$UV_CACHE_DIR" "$TORCH_EXTENSIONS_DIR" \
-  "$FLASHINFER_WORKSPACE_BASE"
+  "$FLASHINFER_WORKSPACE_BASE" "$XDG_CACHE_HOME" "$TRITON_CACHE_DIR"
 touch "$LOG"
 exec > >(tee -a "$LOG") 2>&1
 
-if [[ ! -x "$PYTHON" ]]; then
-  echo "ERROR: Python 3.12 is required at $PYTHON" >&2
+if [[ -e "$VENV" && ! -L "$VENV" ]]; then
+  echo "ERROR: refusing to replace non-symlink runtime: $VENV" >&2
   exit 2
 fi
+ln -sfn "$GPU_VENV" "$VENV"
 
-UV="${UV:-$(command -v uv || true)}"
-if [[ -z "$UV" ]]; then
-  echo "ERROR: uv is required; install uv or set UV=/path/to/uv" >&2
-  exit 2
-fi
-
-LOCK_HASH="$($PYTHON - "$LOCK" <<'PY'
+LOCK_HASH="$("$PYTHON" - "$LOCK" <<'PY'
 import hashlib
 import pathlib
 import sys
@@ -38,51 +57,10 @@ print(hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest())
 PY
 )"
 
-if [[ -x "$VENV/bin/python" ]] \
-  && (cd "$ROOT" && "$VENV/bin/python" -m benchmark_environment --check) \
-  && (cd "$ROOT" && "$VENV/bin/python" -c 'import benchmark_engine'); then
-  if [[ ! -f "$MARKER" || "$(<"$MARKER")" != "$LOCK_HASH" ]]; then
-    printf '%s\n' "$LOCK_HASH" > "$MARKER"
-  fi
-  echo "Benchmark runtime already satisfies lock $LOCK_HASH"
-  exit 0
-fi
-
-rm -f "$MARKER"
-echo "Creating benchmark runtime under $RUNTIME"
-"$UV" venv --clear --python "$PYTHON" "$VENV"
-
-mapfile -t PACKAGE_SPECS < <("$PYTHON" - "$LOCK" <<'PY'
-import json
-import sys
-lock = json.load(open(sys.argv[1]))
-for name, package in sorted(lock["packages"].items()):
-    if name != "sglang":
-        print(f"{name}=={package['version']}")
-PY
-)
-
-SGLANG_SPEC="$($PYTHON - "$LOCK" <<'PY'
-import json
-import sys
-source = json.load(open(sys.argv[1]))["source"]["sglang"]
-print(
-    "sglang @ git+"
-    f"{source['url']}@{source['commit']}"
-    f"#subdirectory={source['subdirectory']}"
-)
-PY
-)"
-
-echo "Installing locked runtime dependencies"
-"$UV" pip install --python "$VENV/bin/python" \
-  "${PACKAGE_SPECS[@]}" "$SGLANG_SPEC"
-
-echo "Installing benchmark engine"
-VIRTUAL_ENV="$VENV" "$UV" pip install --no-deps -e "$ROOT"
-
 cd "$ROOT"
-"$VENV/bin/python" -m benchmark_environment --check
-"$VENV/bin/python" -c 'import benchmark_engine'
-printf '%s\n' "$LOCK_HASH" > "$MARKER"
-echo "Benchmark runtime ready: $VENV"
+"$PYTHON" -m benchmark_environment --check
+"$PYTHON" -c 'import benchmark_engine'
+FINGERPRINT="$("$PYTHON" -m benchmark_environment --json | "$PYTHON" -c \
+  'import json,sys; print(json.load(sys.stdin)["fingerprint"])')"
+printf '%s %s\n' "$LOCK_HASH" "$FINGERPRINT" > "$MARKER"
+echo "MI300X benchmark runtime ready: $VENV -> $GPU_VENV"

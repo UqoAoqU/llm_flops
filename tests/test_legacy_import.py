@@ -285,7 +285,7 @@ class ResultsV4ContractTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "legacy_graph_ms empty"):
                 table.read_rows()
 
-    def test_normal_v3_reads_and_first_append_atomically_upgrades_to_v4(self):
+    def test_normal_v3_reads_and_first_append_atomically_upgrades_to_v5(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "results.csv"
             normal = results_row()
@@ -305,7 +305,7 @@ class ResultsV4ContractTests(unittest.TestCase):
                 reader = csv.DictReader(stream)
                 rows = list(reader)
             self.assertEqual(reader.fieldnames, list(RESULTS_SCHEMA.fieldnames))
-            self.assertTrue(all(row["schema_version"] == "4" for row in rows))
+            self.assertTrue(all(row["schema_version"] == "5" for row in rows))
 
     def test_normal_and_legacy_semantics_apply_on_append_and_read(self):
         with tempfile.TemporaryDirectory() as directory:

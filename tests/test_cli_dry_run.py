@@ -42,7 +42,7 @@ class CliDryRunTest(unittest.TestCase):
         (root / "suites").mkdir()
         (root / "suites" / "smoke.yaml").write_text(SUITE, encoding="utf-8")
         (root / "requirements").mkdir()
-        (root / "requirements" / "benchmark-lock.json").write_text('{"schema_version": 1}', encoding="utf-8")
+        (root / "requirements" / "benchmark-lock.json").write_text('{"schema_version": 2}', encoding="utf-8")
         return candidate_id
 
     def test_dry_run_is_json_and_has_no_candidate_cuda_or_artifact_side_effect(self):

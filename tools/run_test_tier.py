@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stable entry points for CPU, GPU smoke, B200 regression, and full validation."""
+"""Stable entry points for CPU and MI300X/ROCm validation."""
 
 from __future__ import annotations
 
@@ -22,30 +22,18 @@ def _commands(tier: str, work_root: Path) -> list[list[str]]:
     ]
     gpu = [
         [str(ROOT / "run.sh"), "smoke"],
-        [str(ROOT / "bench.sh"), "run", "--suite", "smoke"],
-    ]
-    regression = [
-        [str(PYTHON), str(ROOT / "tools" / "regress_deepseek_v4.py"),
-         "--phase", phase, "--work-dir", str(work_root / phase)]
-        for phase in ("prefill", "decode")
-    ]
-    nightly = [
-        [str(ROOT / "bench.sh"), "run", "--suite", "regression"],
-        [str(ROOT / "bench.sh"), "run", "--suite", "deepseek_v4_prefill"],
-        [str(ROOT / "bench.sh"), "run", "--suite", "deepseek_v4_decode"],
+        [str(ROOT / "bench.sh"), "run", "--suite", "mi300x_smoke"],
     ]
     if tier == "cpu":
         return cpu
-    if tier == "gpu-smoke":
+    if tier == "mi300x-smoke":
         return gpu
-    if tier == "b200-regression":
-        return regression
-    return cpu + gpu + regression + nightly
+    return cpu + gpu
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run one documented benchmark test tier.")
-    parser.add_argument("tier", choices=("cpu", "gpu-smoke", "b200-regression", "full"))
+    parser.add_argument("tier", choices=("cpu", "mi300x-smoke", "full"))
     parser.add_argument(
         "--work-root", type=Path, default=ROOT / ".runtime" / "regression" / "deepseek-v4"
     )
@@ -57,6 +45,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     environment = dict(os.environ)
     if arguments.tier != "cpu":
+        environment["ROCR_VISIBLE_DEVICES"] = "0"
+        environment["HIP_VISIBLE_DEVICES"] = "0"
         environment["CUDA_VISIBLE_DEVICES"] = "0"
     for command in commands:
         subprocess.run(command, cwd=ROOT, env=environment, check=True)

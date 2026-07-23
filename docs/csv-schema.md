@@ -8,16 +8,16 @@ Identical primary-key rows are idempotent; different content is a conflict.
 
 ## Versions
 
-- `results.csv`: v4;
+- `results.csv`: v5;
 - `performance_samples.csv`: v3;
 - correctness, projection, run index, and history: v1.
 
-Valid results v1/v2/v3 and samples v1/v2 are read through explicit migration.
+Valid results v1/v2/v3/v4 and samples v1/v2 are read through explicit migration.
 The next append atomically writes the current header. Results migrated from
 v1-v3 receive `imported_legacy=false`; old missing gate provenance remains
 non-rankable. Unknown headers or enum values are rejected.
 
-## results.csv v4
+## results.csv v5
 
 One row summarizes one operator/candidate/case/seed; primary key `result_id`.
 Stable groups are:
@@ -29,6 +29,12 @@ Stable groups are:
   graph capture, steady-state, and reference equivalents;
 - statistics: mean/median/min/max/percentiles/population stddev/CV per role;
 - fairness/gates: formal/ranking flags, reasons, resolved thresholds, telemetry;
+- accelerator provenance: visible-device mapping, backend, runtime version,
+  GPU architecture, and KFD/PyTorch identity-resolution path.
+  `visible_devices` is a strictly parsed JSON object containing only the three
+  supported visibility variables. A PyTorch fallback must also be named in
+  `telemetry_error`. `cuda_version` remains a compatibility field for old
+  rows and is empty for new ROCm rows;
 - cost and memory: FLOPs, bytes, arithmetic intensity, throughput, allocated,
   reserved, and workspace bytes;
 - `legacy_graph_ms`: the only aggregate latency admitted from the old
@@ -44,7 +50,7 @@ all requested formal gates passed; `skipped` is policy/non-execution;
 reference ID, source hashes, and case hash remain mandatory through row-level
 validation; `legacy_graph_ms` must be empty.
 
-For `true` rows the v4 validator, on append, append-many, read, and migration
+For `true` rows the v5 validator, on append, append-many, read, and migration
 output, requires:
 
 - suite `legacy_import`, mode `performance`;

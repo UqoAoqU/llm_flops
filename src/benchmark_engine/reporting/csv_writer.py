@@ -9,6 +9,7 @@ a partial append.
 from __future__ import annotations
 
 import csv
+import json
 import math
 import os
 import tempfile
@@ -121,7 +122,7 @@ def _columns(
     return tuple(result)
 
 
-RESULTS_FIELDNAMES = (
+RESULTS_FIELDNAMES_V4 = (
     "schema_version",
     "run_id",
     "evaluation_id",
@@ -238,7 +239,21 @@ RESULTS_FIELDNAMES = (
     "profile_path",
 )
 
-_RESULTS_V2_FIELDNAMES = tuple(name for name in RESULTS_FIELDNAMES if name not in {
+_ACCELERATOR_FIELDS = (
+    "visible_devices",
+    "accelerator_backend",
+    "accelerator_runtime_version",
+    "gpu_arch",
+    "gpu_identity_resolution",
+)
+_ACCELERATOR_INSERT_AT = RESULTS_FIELDNAMES_V4.index("cuda_visible_devices")
+RESULTS_FIELDNAMES = (
+    *RESULTS_FIELDNAMES_V4[:_ACCELERATOR_INSERT_AT],
+    *_ACCELERATOR_FIELDS,
+    *RESULTS_FIELDNAMES_V4[_ACCELERATOR_INSERT_AT:],
+)
+
+_RESULTS_V2_FIELDNAMES = tuple(name for name in RESULTS_FIELDNAMES_V4 if name not in {
     "imported_legacy", "legacy_graph_ms",
     "gpu_uuid", "logical_device", "visible_device", "cuda_visible_devices", "driver_version",
     "other_compute_processes_detected", "telemetry_error", "reference_requested_timer",
@@ -449,6 +464,8 @@ def _results_columns(names: tuple[str, ...]) -> tuple[CsvColumn, ...]:
             ),
             "performance_gate_status": frozenset({"passed", "failed", "skipped"}),
             "gate_unsupported_policy": frozenset({"fail", "allow"}),
+            "accelerator_backend": frozenset({"rocm", "cuda"}),
+            "gpu_identity_resolution": frozenset({"kfd", "torch", "unresolved"}),
         }.items() if key in names},
     )
 
@@ -499,7 +516,7 @@ RESULTS_SCHEMA_V3 = CsvSchema(
     _results_columns(
         tuple(
             name
-            for name in RESULTS_FIELDNAMES
+            for name in RESULTS_FIELDNAMES_V4
             if name not in {"imported_legacy", "legacy_graph_ms"}
         )
     ),
@@ -512,6 +529,35 @@ RESULTS_SCHEMA_V3 = CsvSchema(
 
 def _validate_results_v4_row(row: Mapping[str, str]) -> None:
     """Enforce provenance semantics beyond nullable column mechanics."""
+
+    visible_devices = row.get("visible_devices")
+    if visible_devices:
+        try:
+            mapping = json.loads(visible_devices)
+        except (TypeError, json.JSONDecodeError) as error:
+            raise CsvContractError(
+                "visible_devices must be a JSON object"
+            ) from error
+        allowed = {
+            "ROCR_VISIBLE_DEVICES",
+            "HIP_VISIBLE_DEVICES",
+            "CUDA_VISIBLE_DEVICES",
+        }
+        if (
+            not isinstance(mapping, dict)
+            or any(key not in allowed for key in mapping)
+            or any(not isinstance(value, str) for value in mapping.values())
+        ):
+            raise CsvContractError(
+                "visible_devices must map known visibility variables to strings"
+            )
+    if (
+        row.get("gpu_identity_resolution") == "torch"
+        and "gpu_identity_torch_fallback" not in row.get("telemetry_error", "")
+    ):
+        raise CsvContractError(
+            "torch GPU identity fallback must be explicit in telemetry_error"
+        )
 
     imported = row.get("imported_legacy") == "true"
     provenance = (
@@ -616,13 +662,44 @@ def _migrate_results_to_v4(
     return migrated
 
 
-RESULTS_SCHEMA = CsvSchema(
+RESULTS_SCHEMA_V4 = CsvSchema(
     "results.csv",
-    _results_columns(RESULTS_FIELDNAMES),
+    _results_columns(RESULTS_FIELDNAMES_V4),
     ("result_id",),
     version=4,
     compatible_previous=(RESULTS_SCHEMA_V1, RESULTS_SCHEMA_V2, RESULTS_SCHEMA_V3),
     migrate_previous=_migrate_results_to_v4,
+    validate_row=_validate_results_v4_row,
+)
+
+
+def _migrate_results_to_v5(
+    row: Mapping[str, object], version: int
+) -> Mapping[str, object]:
+    if version in {1, 2, 3}:
+        migrated = dict(_migrate_results_to_v4(row, version))
+    elif version == 4:
+        migrated = dict(row)
+    else:
+        raise CsvContractError(f"unsupported results.csv migration from v{version}")
+    migrated["schema_version"] = 5
+    for name in _ACCELERATOR_FIELDS:
+        migrated[name] = None
+    return migrated
+
+
+RESULTS_SCHEMA = CsvSchema(
+    "results.csv",
+    _results_columns(RESULTS_FIELDNAMES),
+    ("result_id",),
+    version=5,
+    compatible_previous=(
+        RESULTS_SCHEMA_V1,
+        RESULTS_SCHEMA_V2,
+        RESULTS_SCHEMA_V3,
+        RESULTS_SCHEMA_V4,
+    ),
+    migrate_previous=_migrate_results_to_v5,
     validate_row=_validate_results_v4_row,
 )
 
@@ -1139,5 +1216,6 @@ __all__ = [
     "RESULTS_SCHEMA_V1",
     "RESULTS_SCHEMA_V2",
     "RESULTS_SCHEMA_V3",
+    "RESULTS_SCHEMA_V4",
     "atomic_write_text",
 ]

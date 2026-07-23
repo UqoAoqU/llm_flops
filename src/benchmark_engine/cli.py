@@ -227,8 +227,17 @@ def main(
             gpu = observed.get("gpu", {})
             assert isinstance(gpu, dict)
             print(f"Benchmark environment: {report['fingerprint']}")
-            print(f"Python {observed.get('python')}  CUDA {observed.get('cuda')}")
-            print(f"GPU {gpu.get('name')}  capability={gpu.get('capability')}")
+            accelerator = observed.get("accelerator", {})
+            assert isinstance(accelerator, dict)
+            print(
+                f"Python {observed.get('python')}  "
+                f"{str(accelerator.get('backend') or 'accelerator').upper()} "
+                f"{accelerator.get('runtime')}"
+            )
+            print(
+                f"GPU {gpu.get('name')}  arch={gpu.get('arch')}  "
+                f"count={gpu.get('count')}"
+            )
             for error in report["errors"]:
                 print(f"ERROR: {error}")
         return 0

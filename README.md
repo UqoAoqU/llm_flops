@@ -6,16 +6,17 @@ artifacts. An optimized implementation such as DeepGEMM or FlashInfer is the
 `reference`; code under evaluation is a `candidate`. A byte-identical copy of
 the reference is a useful control candidate when validating the framework.
 
-The engine supports the migrated DeepSeek V4 FP8/MXFP8 operators. The original
-`run.sh` DeepSeek and GLM-5 launchers remain available as legacy baselines.
-The engine becomes the recommended performance entry on a host only after the
-documented B200 legacy/new regression passes on an idle GPU; this repository
-does not turn an unexecuted or noisy regression into a recommendation.
+This branch is the MI300X/ROCm adaptation of the engine. PyTorch continues to
+expose HIP events and graphs through the `torch.cuda` namespace, so the stable
+`cuda_event` and `cuda_graph` CLI timer names are retained while result rows
+record `accelerator_backend=rocm`. The original DeepSeek and GLM-5 launchers
+remain available as legacy baselines but are not MI300X release gates.
 
 ## Install
 
-Run from the repository root on Linux with Python 3.12, `uv`, a compatible
-NVIDIA driver/toolkit, `ninja`, and Rust available:
+Run from the repository root on the configured MI300X host. Python 3.11,
+PyTorch 2.10.0+rocm7.0, SGLang, and AITER are provided by the shared
+environment named in `~/.config/agent4kernel/env.sh`:
 
 ```bash
 ./bootstrap.sh
@@ -24,8 +25,11 @@ NVIDIA driver/toolkit, `ninja`, and Rust available:
 ./bench.sh env
 ```
 
-`bootstrap.sh` creates `.runtime/venv`. `bench.sh` selects it automatically;
-manual activation is not required.
+`bootstrap.sh` verifies the immutable environment lock and creates the safe
+`.runtime/venv` symlink to `$GPU_VENV`; it does not download or reinstall
+large GPU dependencies. Both launchers discard inherited `PYTHONPATH` and
+explicitly select the llm_flops, SGLang, and AITER source trees. See the
+[MI300X runtime guide](docs/mi300x.md).
 
 ## Five-minute CPU check
 
@@ -93,10 +97,8 @@ warmup, graph capture, and steady-state samples remain separate:
 `all` requests correctness and formal performance in one evaluation:
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 ./bench.sh run --mode all \
-  --operator deepseek_v4_fp8_gemm_nt --tag smoke
-CUDA_VISIBLE_DEVICES=0 ./bench.sh run --suite deepseek_v4_prefill
-CUDA_VISIBLE_DEVICES=0 ./bench.sh run --suite deepseek_v4_decode
+ROCR_VISIBLE_DEVICES=0 HIP_VISIBLE_DEVICES=0 CUDA_VISIBLE_DEVICES=0 \
+  ./bench.sh run --suite mi300x_smoke
 ```
 
 Resume and compare only formal engine evaluations:
@@ -147,7 +149,8 @@ Remove `--dry-run` to publish strict `legacy_import_manifest.json` artifacts.
 Legacy imports are not added to `run_index.csv`; resume and compare reject them.
 MXFP4 CSV import is deliberately unsupported and fails with a stable error.
 
-Run the predeclared B200 comparison only on an idle physical GPU 0:
+The predeclared B200 comparison is retained only for historical result
+compatibility and is not part of the MI300X gate:
 
 ```bash
 .runtime/venv/bin/python tools/regress_deepseek_v4.py \
@@ -190,12 +193,13 @@ per-operator settings.
 ## Documentation
 
 - [Documentation index](docs/index.md)
+- [MI300X/ROCm runtime](docs/mi300x.md)
 - [Getting started](docs/getting-started.md)
 - [CLI](docs/cli.md)
 - [Architecture](docs/architecture.md) and [implementation](docs/implementation.md)
 - [Correctness](docs/correctness.md) and [performance](docs/performance.md)
 - [CSV schema](docs/csv-schema.md) and [result layout](docs/result-layout.md)
-- [Legacy migration and B200 regression](docs/migration-llm-flops.md)
+- [Legacy migration and archived B200 regression](docs/migration-llm-flops.md)
 - [GLM-5 migration and coverage](docs/glm5-migration.md)
 - [Test tiers](docs/testing.md) and [troubleshooting](docs/troubleshooting.md)
 - [Legacy launchers](docs/legacy-launchers.md)

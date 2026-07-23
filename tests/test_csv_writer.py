@@ -96,11 +96,55 @@ class AtomicCsvTableTests(unittest.TestCase):
         self.assertEqual(stable.read_rows(), [stable.normalise({"row_id": "one", "message": "stable"})])
         self.assertEqual(list(self.root.glob(".data.csv.*.tmp")), [])
 
-    def test_results_v4_starts_with_schema_and_has_result_primary_key(self) -> None:
-        self.assertEqual(RESULTS_SCHEMA.version, 4)
+    def test_results_v5_starts_with_schema_and_has_result_primary_key(self) -> None:
+        self.assertEqual(RESULTS_SCHEMA.version, 5)
         self.assertEqual(RESULTS_SCHEMA.fieldnames[0], "schema_version")
         self.assertEqual(RESULTS_SCHEMA.primary_key, ("result_id",))
         self.assertEqual(RESULTS_SCHEMA.filename, "results.csv")
+        for field in (
+            "visible_devices",
+            "accelerator_backend",
+            "accelerator_runtime_version",
+            "gpu_arch",
+            "gpu_identity_resolution",
+        ):
+            self.assertIn(field, RESULTS_SCHEMA.fieldnames)
+
+    def test_results_v5_strictly_parses_accelerator_provenance(self) -> None:
+        table = AtomicCsvTable(self.root / "results.csv", RESULTS_SCHEMA)
+        valid = results_row()
+        valid.update(
+            visible_devices='{"ROCR_VISIBLE_DEVICES":"0"}',
+            accelerator_backend="rocm",
+            gpu_identity_resolution="kfd",
+        )
+        self.assertTrue(table.append(valid))
+
+        for field, value in (
+            ("visible_devices", "not-json"),
+            ("visible_devices", '{"UNKNOWN_VISIBLE_DEVICES":"0"}'),
+            ("accelerator_backend", "vulkan"),
+            ("gpu_identity_resolution", "nvidia-smi"),
+        ):
+            with self.subTest(field=field, value=value):
+                invalid = results_row(
+                    result_id=f"res_{field[:8]:0<8}{len(value):024x}"
+                )
+                invalid.update(valid)
+                invalid["result_id"] = f"res_{len(value):032x}"
+                invalid[field] = value
+                with self.assertRaises(CsvContractError):
+                    table.append(invalid)
+
+        fallback = results_row(result_id="res_ffffffffffffffffffffffffffffffff")
+        fallback.update(
+            visible_devices='{"HIP_VISIBLE_DEVICES":"0"}',
+            accelerator_backend="rocm",
+            gpu_identity_resolution="torch",
+            telemetry_error="rocm_process_query_unavailable",
+        )
+        with self.assertRaisesRegex(CsvContractError, "fallback"):
+            table.append(fallback)
 
     def test_enum_columns_reject_invalid_values_before_creating_tables(self) -> None:
         result = results_row()

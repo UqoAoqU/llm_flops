@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 class PackageContractTest(unittest.TestCase):
     def test_pyproject_declares_src_layout_and_console_entry(self):
         project = tomllib.loads((ROOT / "pyproject.toml").read_text())
-        self.assertEqual(project["project"]["requires-python"], ">=3.12,<3.13")
+        self.assertEqual(project["project"]["requires-python"], ">=3.11,<3.12")
         self.assertIn("PyYAML==6.0.3", project["project"]["dependencies"])
         self.assertEqual(
             project["project"]["scripts"]["bench"],

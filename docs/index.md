@@ -6,9 +6,10 @@ The root [README](../README.md) contains the shortest runnable example.
 ## Use the engine
 
 - [Getting started](getting-started.md): install, discover, dry-run, execute, resume.
+- [MI300X/ROCm runtime](mi300x.md): shared environment, topology lock, timers, and gates.
 - [CLI](cli.md): commands, selectors, precedence, and exit codes.
 - [Troubleshooting](troubleshooting.md): JIT, timeout, OOM, locks, noise, and artifacts.
-- [Test tiers](testing.md): CPU, GPU smoke, B200 regression, and nightly/full gates.
+- [Test tiers](testing.md): CPU/contract, MI300X smoke, and full gates.
 
 ## Add an implementation
 

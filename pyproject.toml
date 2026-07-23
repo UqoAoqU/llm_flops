@@ -7,7 +7,7 @@ name = "benchmark-engine"
 version = "0.1.0"
 description = "Reproducible correctness and performance benchmark engine"
 readme = "README.md"
-requires-python = ">=3.12,<3.13"
+requires-python = ">=3.11,<3.12"
 dependencies = [
     "PyYAML==6.0.3",
 ]

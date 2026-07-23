@@ -1,6 +1,6 @@
 """Public package surface for the benchmark engine."""
 
-from importlib.metadata import version
+from importlib.metadata import PackageNotFoundError, version
 
 from .models import (
     CaseSpec,
@@ -16,7 +16,12 @@ from .models import (
     ResultStatus,
 )
 
-__version__ = version("benchmark-engine")
+try:
+    __version__ = version("benchmark-engine")
+except PackageNotFoundError:
+    # The MI300X runtime executes the repository directly through a controlled
+    # PYTHONPATH so the shared ROCm virtualenv remains untouched.
+    __version__ = "0.1.0"
 
 __all__ = [
     "__version__",

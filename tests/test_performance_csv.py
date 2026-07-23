@@ -69,7 +69,7 @@ class PerformanceCsvTests(unittest.TestCase):
             AtomicCsvTable(path, RESULTS_SCHEMA_V1).append(result_row())
             table = AtomicCsvTable(path, RESULTS_SCHEMA)
             rows = table.read_rows()
-            self.assertEqual(rows[0]["schema_version"], "4")
+            self.assertEqual(rows[0]["schema_version"], "5")
             self.assertEqual(rows[0]["imported_legacy"], "false")
             self.assertEqual(rows[0]["seed"], "7")
             self.assertEqual(rows[0]["correctness_pass"], "true")
@@ -88,18 +88,18 @@ class PerformanceCsvTests(unittest.TestCase):
             table.append(new)
             with path.open(newline="", encoding="utf-8") as stream:
                 stored = list(csv.DictReader(stream))
-            self.assertEqual(stored[0]["schema_version"], "4")
+            self.assertEqual(stored[0]["schema_version"], "5")
             self.assertEqual(len(stored), 2)
             self.assertEqual(stored[0]["candidate_median_ms"], "1.25")
 
-    def test_nonempty_v2_results_directly_migrate_to_non_rankable_v4(self):
+    def test_nonempty_v2_results_directly_migrate_to_non_rankable_v5(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "results.csv"
             old = result_row()
             old.update(requested_timer="cuda_event", effective_timer="cuda_event")
             AtomicCsvTable(path, RESULTS_SCHEMA_V2).append(old)
             rows = AtomicCsvTable(path, RESULTS_SCHEMA).read_rows()
-            self.assertEqual(rows[0]["schema_version"], "4")
+            self.assertEqual(rows[0]["schema_version"], "5")
             self.assertEqual(rows[0]["imported_legacy"], "false")
             self.assertEqual(rows[0]["performance_formal"], "false")
             self.assertEqual(rows[0]["ranking_eligible"], "false")

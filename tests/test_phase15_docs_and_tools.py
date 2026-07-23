@@ -100,7 +100,7 @@ class Phase15ToolContractTests(unittest.TestCase):
     def test_test_tiers_are_stable_and_dry_run_has_no_side_effects(self):
         script = ROOT / "tools" / "run_test_tier.py"
         with tempfile.TemporaryDirectory() as directory:
-            for tier in ("cpu", "gpu-smoke", "b200-regression", "full"):
+            for tier in ("cpu", "mi300x-smoke", "full"):
                 result = subprocess.run(
                     [sys.executable, str(script), tier, "--dry-run", "--work-root", directory],
                     cwd=ROOT, text=True, capture_output=True, check=True,

@@ -1,92 +1,33 @@
 #!/usr/bin/env python3
-"""Run one minimal GPU case for each individual-operator family."""
+"""Run the formal MI300X benchmark-engine smoke suite."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import os
+import subprocess
 from pathlib import Path
-import sys
-from typing import Callable
 
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 
 
-@dataclass(frozen=True)
-class SmokeCase:
-    name: str
-    run: Callable[[], object]
-
-
-def _dsa_indexer():
-    import torch
-    import dsa_indexer as benchmark
-
-    benchmark.NUM_WARMUP = 1
-    benchmark.NUM_RUNS = 1
-    return benchmark.bench_cublas_fp8(16, 128, 128, torch.device("cuda:0"))
-
-
-def _dsa_flashmla():
-    import torch
-    import dsa_flashmla as benchmark
-
-    benchmark.NUM_WARMUP = 1
-    benchmark.NUM_RUNS = 1
-    return benchmark.bench_one(16, 512, 64, torch.device("cuda:0"))
-
-
-def _dsa_projection():
-    import torch
-    import dsa_projection as benchmark
-
-    benchmark.NUM_WARMUP = 1
-    benchmark.NUM_RUNS = 1
-    return benchmark.bench_gemm(16, 128, 128, torch.device("cuda:0"))
-
-
-def _mla_flashmla():
-    import torch
-    from deepseek_v4_benchmark import _decode_attention_fn, graph_ms
-
-    run = _decode_attention_fn(16, 512, 0, torch)
-    return graph_ms(run, torch, warmup=1, runs=1)
-
-
-def _moe_deepgemm():
-    import torch
-    import moe_deepgemm as benchmark
-
-    benchmark.NUM_WARMUP = 1
-    benchmark.NUM_RUNS = 1
-    distribution = [1] + [0] * (benchmark.N_EXPERT - 1)
-    return benchmark.bench_grouped_gemm(
-        distribution, 128, 128, torch.device("cuda:0")
-    )
-
-
-def build_smoke_plan() -> tuple[SmokeCase, ...]:
-    return (
-        SmokeCase("dsa_indexer", _dsa_indexer),
-        SmokeCase("dsa_flashmla", _dsa_flashmla),
-        SmokeCase("dsa_projection", _dsa_projection),
-        SmokeCase("mla_flashmla", _mla_flashmla),
-        SmokeCase("moe_deepgemm", _moe_deepgemm),
-    )
+def build_smoke_command() -> tuple[str, ...]:
+    """Return the one authoritative MI300X smoke command."""
+    return (str(ROOT / "bench.sh"), "run", "--suite", "mi300x_smoke")
 
 
 def main() -> int:
-    failures = []
-    for case in build_smoke_plan():
-        print(f"[smoke] {case.name}: running", flush=True)
-        try:
-            case.run()
-            print(f"[smoke] {case.name}: PASS", flush=True)
-        except Exception as error:
-            failures.append((case.name, error))
-            print(f"[smoke] {case.name}: FAIL: {error}", flush=True)
-    return 1 if failures else 0
+    environment = dict(os.environ)
+    environment["ROCR_VISIBLE_DEVICES"] = "0"
+    environment["HIP_VISIBLE_DEVICES"] = "0"
+    environment["CUDA_VISIBLE_DEVICES"] = "0"
+    completed = subprocess.run(
+        build_smoke_command(),
+        cwd=ROOT,
+        env=environment,
+        check=False,
+    )
+    return completed.returncode
 
 
 if __name__ == "__main__":

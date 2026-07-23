@@ -523,6 +523,19 @@ def execute(
                                     "logical_device": request.cuda_devices[0],
                                     "visible_device": None, "gpu_uuid": None,
                                     "gpu_name": None,
+                                    "gpu_arch": None,
+                                    "gpu_identity_resolution": "unresolved",
+                                    "accelerator_backend": "rocm",
+                                    "accelerator_runtime_version": None,
+                                    "visible_devices": {
+                                        name: os.environ.get(name)
+                                        for name in (
+                                            "ROCR_VISIBLE_DEVICES",
+                                            "HIP_VISIBLE_DEVICES",
+                                            "CUDA_VISIBLE_DEVICES",
+                                        )
+                                        if os.environ.get(name) is not None
+                                    },
                                     "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
                                     "driver_version": None, "cuda_version": None,
                                     "other_compute_processes_detected": None,

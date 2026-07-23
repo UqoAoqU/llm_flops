@@ -1,0 +1,25 @@
+schema_version: 1
+operator_id: example_rocm_bf16_gemm
+contract_version: 1
+description: PyTorch BF16 GEMM used to validate the MI300X benchmark engine
+reference_entrypoint: implementation:operator
+spec_entrypoint: spec:SPEC
+device_types: [cuda]
+tags: [example, rocm, mi300x, bf16, gemm]
+correctness:
+  default_comparator: floating
+  rtol: 0.001
+  atol: 0.01
+  equal_nan: false
+  determinism_repeats: 1
+performance:
+  timer: auto
+  graph_mode: enabled
+  warmup: 5
+  samples: 30
+  inner_iterations: 20
+  timeout_s: 300
+  regression_threshold_pct: 10.0
+  max_cv: 0.15
+  gpu_lock_timeout_s: 600
+cost_model: spec:cost_model

@@ -25,8 +25,10 @@ samples, so resume does not repeat it.
 
 ## Timers and selection
 
-CUDA Event measures an ordinary eager launch with device events. CUDA Graph
-captures the complete inner loop once and measures one replay per raw sample.
+On MI300X, HIP Event measures an ordinary eager launch with device events and
+HIP Graph captures the complete inner loop once. ROCm PyTorch exposes both
+through the stable `torch.cuda` API historically named CUDA Event/CUDA Graph,
+so existing CLI timer names remain `cuda_event` and `cuda_graph`.
 Immediately after capture, preparation performs one additional replay plus
 synchronization so lazy graph instantiation is charged to `graph_capture_ms`
 instead of the first steady-state sample.
@@ -34,9 +36,9 @@ These human-readable names correspond to the canonical timer identifiers below.
 
 The canonical timer names are:
 
-- `wall_clock`: end-to-end host elapsed time, synchronizing CUDA devices found
+- `wall_clock`: end-to-end host elapsed time, synchronizing accelerator devices found
   in the actual input/output tensors before and after each sample;
-- `cuda_event`: device elapsed time from a CUDA event pair per raw sample;
+- `cuda_event`: device elapsed time from a CUDA/HIP event pair per raw sample;
 - `cuda_graph`: one captured graph contains the complete inner loop, one graph
   replay is measured per sample, then elapsed time is divided by the inner
   iteration count;
@@ -68,10 +70,10 @@ manifest value, engine default. Relevant CLI options include `--timer`,
 After both roles complete independent first-call, warmup, and graph capture,
 steady samples follow fixed `R-C-C-R` order. `order_index` is the global
 execution order in this interleaving, not a rank. `performance_samples.csv`
-`performance_samples.csv` schema v3 stores each reference/candidate sample
+schema v3 stores each reference/candidate sample
 separately, including `elapsed_ms`, `per_call_ms`, `inner_iterations`, timer
 provenance, a global order index, and compact output-path maps for both
-implementations' dtype and shape. `results.csv` schema v4 stores the aggregate
+implementations' dtype and shape. `results.csv` schema v5 stores the aggregate
 mean, median, min, max, p50, p90, p95, p99, population standard deviation, and
 coefficient of variation (CV) for both roles. Percentiles use linear Type-7
 interpolation.
@@ -81,15 +83,17 @@ Fewer than five samples or CV above the resolved threshold marks a measurement
 
 ## GPU lock, telemetry, gates, and comparison
 
-CUDA operators in `all` or `performance` mode acquire
-`.runtime/locks/<GPU UUID>.lock` before worker launch, including when using
-`wall_clock`. Lock metadata contains PID, run ID, UTC start, logical/visible
-device, and UUID. Only a definitely absent owner PID is reclaimed; malformed
-metadata, permission uncertainty, and possible PID reuse time out conservatively.
+ROCm operators in `all` or `performance` mode resolve the physical GPU from
+KFD topology (`gpu_id`, `location_id`, and render minor) and acquire
+`.runtime/locks/<physical identity>.lock` before worker launch, including when
+using `wall_clock`. Visible-device precedence is `ROCR_VISIBLE_DEVICES`, then
+`HIP_VISIBLE_DEVICES`, then `CUDA_VISIBLE_DEVICES`. A PyTorch UUID fallback is
+used only when KFD is unavailable and is explicitly marked in telemetry.
 
-GPU identity, driver/CUDA version, `CUDA_VISIBLE_DEVICES`, and best-effort
-other-compute-process state are recorded before sampling. Unknown telemetry is
-empty, never fake zero. Competing compute activity makes a result non-formal.
+GPU identity, ROCm/HIP runtime, gfx architecture, amdgpu driver, all three
+visible-device variables, and best-effort other-compute-process state are
+recorded before sampling. Unknown telemetry is empty, never fake zero.
+Competing compute activity makes a result non-formal.
 Correctness failures normally produce no samples; `--perf-on-correctness-fail`
 keeps diagnostic samples permanently non-formal.
 

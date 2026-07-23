@@ -1,0 +1,19 @@
+schema_version: 1
+suite_id: mi300x_smoke
+operators:
+  include: ["example_rocm_bf16_gemm"]
+  exclude: []
+candidates:
+  include: ["reference_control__20260723T000000Z__942bf160"]
+cases:
+  tags: [smoke, representative]
+mode: all
+correctness:
+  seeds: [942]
+performance:
+  timer: auto
+  warmup: 5
+  samples: 30
+  inner_iterations: 20
+  max_slowdown_pct: 10.0
+  max_cv: 0.15

@@ -80,6 +80,16 @@ def linux_descendant_pids(pid: int) -> tuple[int, ...]:
 
 
 def process_exists(pid: int) -> bool:
+    if os.name == "posix":
+        try:
+            # A killed descendant can remain as a zombie until its (possibly
+            # containerized) init parent reaps it.  It is no longer executing
+            # and must not be reported as a live compute process.
+            state = Path(f"/proc/{pid}/stat").read_text().split()[2]
+            if state == "Z":
+                return False
+        except (IndexError, OSError):
+            pass
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
