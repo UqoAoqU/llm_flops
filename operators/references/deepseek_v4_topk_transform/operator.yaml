@@ -1,6 +1,7 @@
 schema_version: 1
 operator_id: deepseek_v4_topk_transform
 contract_version: 1
+contract_status: formal
 description: SGLang DeepSeek V4 top-k selection followed by paged-index transform
 reference_entrypoint: implementation:operator
 spec_entrypoint: spec:SPEC

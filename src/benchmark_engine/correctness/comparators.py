@@ -22,6 +22,10 @@ _FALLBACKS = {
 }
 
 
+def _finite_or_none(value: float) -> float | None:
+    return value if math.isfinite(value) else None
+
+
 def resolve_tolerance(
     dtype: str,
     *,
@@ -44,8 +48,31 @@ def resolve_tolerance(
     return Tolerance(rtol, atol, False, "dtype_fallback")
 
 
-def _structure(reference: OutputBundle, candidate: OutputBundle) -> tuple[dict[str, OutputLeaf], dict[str, OutputLeaf], ComparisonResult | None]:
+def _structure(
+    reference: OutputBundle,
+    candidate: OutputBundle,
+    output_paths: tuple[str, ...] | None = None,
+) -> tuple[dict[str, OutputLeaf], dict[str, OutputLeaf], ComparisonResult | None]:
     refs, cands = reference.by_path(), candidate.by_path()
+    if output_paths is not None:
+        missing_reference = [path for path in output_paths if path not in refs]
+        missing_candidate = [path for path in output_paths if path not in cands]
+        if missing_reference or missing_candidate:
+            failed_path = (missing_reference or missing_candidate)[0]
+            metrics = {
+                "declared_paths": list(output_paths),
+                "missing_reference_paths": missing_reference,
+                "missing_candidate_paths": missing_candidate,
+            }
+            return refs, cands, ComparisonResult(
+                False,
+                "structure",
+                metrics,
+                ({"path": failed_path, "reason": "declared output path missing", **metrics},),
+                failed_path,
+            )
+        refs = {path: refs[path] for path in output_paths}
+        cands = {path: cands[path] for path in output_paths}
     if set(refs) != set(cands):
         missing = sorted(set(refs) - set(cands)); extra = sorted(set(cands) - set(refs))
         return refs, cands, ComparisonResult(False, "structure", {"missing_paths": missing, "extra_paths": extra}, failed_path=(missing or extra or [None])[0])
@@ -107,6 +134,83 @@ class FloatingComparator:
                 failed = failed or path
                 diagnostics.extend({"path": path, **item} for item in worst[:self.worst_k])
         return ComparisonResult(failed is None, "floating", all_metrics, tuple(diagnostics[:self.worst_k]), failed)
+
+
+@dataclass(frozen=True)
+class CalcDiffComparator:
+    """DeepGEMM's normalized whole-output error contract.
+
+    This deliberately uses the upstream strict inequality and its zero-vector
+    rule rather than translating the contract into element-wise tolerances.
+    """
+
+    max_diff: float
+    source: str
+    output_paths: tuple[str, ...] | None = None
+
+    def __post_init__(self) -> None:
+        if (
+            isinstance(self.max_diff, bool)
+            or not isinstance(self.max_diff, numbers.Real)
+            or not math.isfinite(float(self.max_diff))
+            or float(self.max_diff) < 0
+        ):
+            raise ValueError("calc_diff max_diff must be finite and non-negative")
+        if not isinstance(self.source, str) or not self.source:
+            raise TypeError("calc_diff source must be a non-empty string")
+        if self.output_paths is not None:
+            if not isinstance(self.output_paths, tuple):
+                raise TypeError("calc_diff output_paths must be a tuple or None")
+            if (
+                not self.output_paths
+                or any(not isinstance(path, str) or not path for path in self.output_paths)
+                or len(set(self.output_paths)) != len(self.output_paths)
+            ):
+                raise ValueError(
+                    "calc_diff output_paths must contain unique non-empty strings"
+                )
+
+    def compare(self, reference: OutputBundle, candidate: OutputBundle, **_: object) -> ComparisonResult:
+        refs, cands, failure = _structure(reference, candidate, self.output_paths)
+        if failure is not None:
+            return failure
+        all_metrics: dict[str, object] = {}
+        diagnostics: list[dict[str, object]] = []
+        failed: str | None = None
+        for path in sorted(refs):
+            denominator = 0.0
+            dot = 0.0
+            nonfinite: list[dict[str, object]] = []
+            for index, (raw_ref, raw_cand) in enumerate(zip(refs[path].value, cands[path].value)):
+                ref, cand = float(raw_ref), float(raw_cand)
+                if not math.isfinite(ref) or not math.isfinite(cand):
+                    if len(nonfinite) < 8:
+                        nonfinite.append({"index": index, "reference": _finite_or_none(ref), "candidate": _finite_or_none(cand)})
+                    continue
+                denominator += ref * ref + cand * cand
+                dot += ref * cand
+            if nonfinite:
+                calc_diff: float | None = None
+                passed = False
+                diagnostics.extend({"path": path, "reason": "nonfinite", **item} for item in nonfinite)
+            elif denominator == 0.0:
+                calc_diff = 0.0
+                passed = calc_diff < self.max_diff
+            else:
+                calc_diff = 1.0 - 2.0 * dot / denominator
+                passed = calc_diff < self.max_diff
+            all_metrics[path] = {
+                "calc_diff": calc_diff,
+                "max_diff": float(self.max_diff),
+                "threshold_source": self.source,
+                "zero_denominator": denominator == 0.0 and not nonfinite,
+                "nonfinite_count": len(nonfinite),
+            }
+            if not passed:
+                failed = failed or path
+                if not nonfinite:
+                    diagnostics.append({"path": path, "calc_diff": calc_diff, "max_diff": float(self.max_diff)})
+        return ComparisonResult(failed is None, "calc_diff", all_metrics, tuple(diagnostics[:8]), failed)
 
 
 @dataclass(frozen=True)

@@ -18,6 +18,33 @@ from tests.registry_fixtures import (
 
 
 class FilesystemRegistryTest(unittest.TestCase):
+    def test_contract_status_is_strict_and_machine_readable(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            manifest = write_reference(Path(temporary)) / "operator.yaml"
+            parsed = parse_operator_manifest(manifest)
+            self.assertEqual(parsed.contract_status, "formal")
+
+            manifest.write_text(
+                manifest.read_text(encoding="utf-8").replace(
+                    "contract_status: formal", "contract_status: contract_pending"
+                ),
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                parse_operator_manifest(manifest).contract_status,
+                "contract_pending",
+            )
+
+            manifest.write_text(
+                manifest.read_text(encoding="utf-8").replace(
+                    "contract_status: contract_pending", "contract_status: hopeful"
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaises(ManifestValidationError) as raised:
+                parse_operator_manifest(manifest)
+            self.assertEqual(raised.exception.field, "contract_status")
+
     def test_performance_optional_fields_resolve_defaults_and_explicit_values(self):
         with tempfile.TemporaryDirectory() as temporary:
             manifest = write_reference(Path(temporary)) / "operator.yaml"

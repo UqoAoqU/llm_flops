@@ -79,6 +79,17 @@ class PlanBuilder:
                 "registry is invalid for selected scope: "
                 + "; ".join(str(issue) for issue in issues)
             )
+        pending = tuple(
+            operator_id
+            for operator_id in operator_ids
+            if snapshot.operator_manifests[operator_id].contract_status
+            == "contract_pending"
+        )
+        if pending:
+            raise PlanningError(
+                "contract_pending operators cannot be executed: "
+                + ", ".join(pending)
+            )
         candidates = select_candidates(snapshot, operator_ids, selectors, suite)
         pairs = tuple(
             (operator_id, candidate)

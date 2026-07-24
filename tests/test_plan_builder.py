@@ -48,6 +48,36 @@ class PlanBuilderTest(unittest.TestCase):
             self.assertEqual(type(plan).from_dict(json.loads(json.dumps(plan.to_dict()))), plan)
             self.assertFalse((root / "results").exists())
 
+    def test_contract_pending_operator_cannot_be_planned_in_any_mode(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            reference = write_reference(root)
+            manifest = reference / "operator.yaml"
+            manifest.write_text(
+                manifest.read_text(encoding="utf-8").replace(
+                    "contract_status: formal", "contract_status: contract_pending"
+                ),
+                encoding="utf-8",
+            )
+            _, candidate = write_candidate(
+                root, "pending", "20260717T000000Z", with_manifest=False
+            )
+            snapshot = FilesystemRegistry(root).discover()
+            self.assertTrue(snapshot.is_valid, snapshot.issues)
+
+            for mode in ("correctness", "performance", "all"):
+                with self.subTest(mode=mode), self.assertRaisesRegex(
+                    PlanningError, "contract_pending"
+                ):
+                    self.builder().build(
+                        snapshot,
+                        SUITE,
+                        Selectors(candidates=(candidate,)),
+                        environment_fingerprint="9" * 64,
+                        output_root=root / "results",
+                        mode=mode,
+                    )
+
     def test_unselected_bad_operator_and_sibling_candidate_do_not_block(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

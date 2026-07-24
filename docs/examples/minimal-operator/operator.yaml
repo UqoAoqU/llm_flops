@@ -1,6 +1,7 @@
 schema_version: 1
 operator_id: minimal_cpu_add
 contract_version: 1
+contract_status: formal
 description: Add two Python numbers on the CPU.
 reference_entrypoint: implementation:operator
 spec_entrypoint: spec:SPEC

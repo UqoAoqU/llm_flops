@@ -1,6 +1,7 @@
 schema_version: 1
 operator_id: example_cpu_add
 contract_version: 1
+contract_status: formal
 description: Pure CPU vector addition used by the correctness quick start
 reference_entrypoint: implementation:operator
 spec_entrypoint: spec:SPEC

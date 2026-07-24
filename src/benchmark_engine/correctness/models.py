@@ -126,6 +126,31 @@ class ComparisonResult:
 
 
 @dataclass(frozen=True)
+class OracleGate:
+    """One named correctness check against an independently-owned oracle.
+
+    ``comparator`` is intentionally a runtime object: the trusted reference
+    spec owns the exact comparison semantics and the evaluator only executes
+    it.  This keeps thresholds out of candidates and orchestration code.
+    """
+
+    gate_id: str
+    oracle_id: str
+    comparator: object
+    required: bool = True
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.gate_id, str) or not self.gate_id:
+            raise TypeError("gate_id must be a non-empty string")
+        if not isinstance(self.oracle_id, str) or not self.oracle_id:
+            raise TypeError("oracle_id must be a non-empty string")
+        if not callable(getattr(self.comparator, "compare", None)):
+            raise TypeError("oracle gate comparator must provide compare()")
+        if not isinstance(self.required, bool):
+            raise TypeError("oracle gate required must be boolean")
+
+
+@dataclass(frozen=True)
 class CorrectnessResult:
     status: Literal["pass", "fail", "error", "timeout", "oom", "unsupported", "nondeterministic"]
     case_id: str

@@ -77,6 +77,7 @@ class OperatorManifest:
     schema_version: int
     operator_id: str
     contract_version: int
+    contract_status: str
     description: str
     reference_entrypoint: str
     spec_entrypoint: str

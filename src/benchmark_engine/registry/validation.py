@@ -38,6 +38,7 @@ _OPERATOR_FIELDS = frozenset(
         "schema_version",
         "operator_id",
         "contract_version",
+        "contract_status",
         "description",
         "reference_entrypoint",
         "spec_entrypoint",
@@ -220,6 +221,18 @@ def _schema_version(value: object, path: Path) -> int:
     return version
 
 
+def _contract_status(value: object, path: Path) -> str:
+    status = _string(value, path, "contract_status")
+    if status not in {"formal", "contract_pending"}:
+        _fail(
+            "manifest.value",
+            path,
+            "contract_status",
+            "must be formal or contract_pending",
+        )
+    return status
+
+
 def _correctness(value: object, path: Path) -> CorrectnessManifest:
     data = _mapping(value, path, "correctness")
     _check_fields(
@@ -372,6 +385,7 @@ def parse_operator_manifest(path: Path) -> OperatorManifest:
         contract_version=_integer(
             data["contract_version"], path, "contract_version", positive=True
         ),
+        contract_status=_contract_status(data["contract_status"], path),
         description=_string(data["description"], path, "description"),
         reference_entrypoint=_string(
             data["reference_entrypoint"], path, "reference_entrypoint"

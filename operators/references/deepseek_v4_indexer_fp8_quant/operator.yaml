@@ -1,6 +1,7 @@
 schema_version: 1
 operator_id: deepseek_v4_indexer_fp8_quant
 contract_version: 1
+contract_status: formal
 description: SGLang fused DeepSeek V4 indexer RoPE Hadamard FP8 quantization
 reference_entrypoint: implementation:operator
 spec_entrypoint: spec:SPEC

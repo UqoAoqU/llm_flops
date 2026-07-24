@@ -9,7 +9,7 @@ from benchmark_engine.models import CaseSpec
 from .comparators import ExactComparator
 from .diagnostics import comparison_diagnostic, exception_diagnostic, reproduction_command
 from .inputs import GENERATOR_VERSION, assert_input_isolation, case_fingerprint, input_summary, make_generator_context
-from .models import CorrectnessResult, InputBundle, OutputBundle
+from .models import ComparisonResult, CorrectnessResult, InputBundle, OracleGate, OutputBundle
 from .normalization import attach_observed_state, normalize_output
 from .protocols import OperatorSpec
 
@@ -137,13 +137,108 @@ class CorrectnessEvaluator:
                 diagnostic = comparison_diagnostic(drift, reproduction=reproduction)
                 diagnostic["kind"] = "nondeterministic"
                 return CorrectnessResult("nondeterministic", case.case_id, case.seed, fingerprint, GENERATOR_VERSION, summary, drift, diagnostic, output_contracts)
-        try:
-            comparison = spec.comparator(case).compare(reference_output, first, case_overrides=case_overrides or {})
-        except Exception as error:
-            return self._exception_result(error, case, fingerprint, summary, "compare", reproduction)
+        gates_factory = getattr(spec, "correctness_gates", None)
+        if callable(gates_factory):
+            try:
+                comparison = self._evaluate_oracle_gates(
+                    spec=spec,
+                    case=case,
+                    canonical=canonical,
+                    reference_inputs=reference_inputs,
+                    candidate_inputs=candidate_input_clones,
+                    reference_output=reference_output,
+                    candidate_output=first,
+                    case_overrides=case_overrides or {},
+                )
+            except _OracleStageError as error:
+                return self._exception_result(error.__cause__ or error, case, fingerprint, summary, error.stage, reproduction)
+            except Exception as error:
+                return self._exception_result(error, case, fingerprint, summary, "oracle_contract", reproduction)
+        else:
+            try:
+                comparison = spec.comparator(case).compare(reference_output, first, case_overrides=case_overrides or {})
+            except Exception as error:
+                return self._exception_result(error, case, fingerprint, summary, "compare", reproduction)
         status = "pass" if comparison.passed else "fail"
         diagnostic = None if comparison.passed else comparison_diagnostic(comparison, reproduction=reproduction)
         return CorrectnessResult(status, case.case_id, case.seed, fingerprint, GENERATOR_VERSION, summary, comparison, diagnostic, output_contracts)
+
+    def _evaluate_oracle_gates(
+        self,
+        *,
+        spec: OperatorSpec,
+        case: CaseSpec,
+        canonical: InputBundle,
+        reference_inputs: InputBundle,
+        candidate_inputs: list[InputBundle],
+        reference_output: OutputBundle,
+        candidate_output: OutputBundle,
+        case_overrides: Mapping[str, object],
+    ) -> ComparisonResult:
+        declared = tuple(spec.correctness_gates(case))
+        if not declared:
+            raise ValueError("correctness_gates() must return at least one gate")
+        if not all(isinstance(gate, OracleGate) for gate in declared):
+            raise TypeError("correctness_gates() must return OracleGate values")
+        if len({gate.gate_id for gate in declared}) != len(declared):
+            raise ValueError("correctness gate ids must be unique")
+        oracles_factory = getattr(spec, "correctness_oracles", None)
+        if not callable(oracles_factory):
+            raise TypeError("multi-oracle spec must provide correctness_oracles()")
+        oracles = oracles_factory(case)
+        if not isinstance(oracles, Mapping):
+            raise TypeError("correctness_oracles() must return a mapping")
+
+        metrics: dict[str, object] = {"gates": {}}
+        diagnostics: list[dict[str, object]] = []
+        failed_path: str | None = None
+        all_passed = True
+        prior_inputs = [reference_inputs, *candidate_inputs]
+        for gate in declared:
+            oracle = oracles.get(gate.oracle_id)
+            if not callable(oracle):
+                raise ValueError(f"missing callable oracle {gate.oracle_id!r} for gate {gate.gate_id!r}")
+            try:
+                oracle_inputs = spec.clone_inputs(canonical)
+                if not isinstance(oracle_inputs, InputBundle):
+                    raise TypeError("OperatorSpec.clone_inputs() must return correctness.InputBundle")
+                assert_input_isolation(canonical, oracle_inputs)
+                for previous in prior_inputs:
+                    assert_input_isolation(previous, oracle_inputs)
+                prior_inputs.append(oracle_inputs)
+                oracle_raw = oracle(oracle_inputs)
+                self.synchronizer(oracle_raw, oracle_inputs)
+                oracle_output = self._normalize(spec, oracle_raw, oracle_inputs)
+            except Exception as error:
+                raise _OracleStageError(f"oracle:{gate.gate_id}") from error
+            try:
+                reference_comparison = gate.comparator.compare(
+                    oracle_output, reference_output, case_overrides=case_overrides
+                )
+                candidate_comparison = gate.comparator.compare(
+                    oracle_output, candidate_output, case_overrides=case_overrides
+                )
+            except Exception as error:
+                raise _OracleStageError(f"compare:{gate.gate_id}") from error
+            gate_passed = reference_comparison.passed and candidate_comparison.passed
+            metrics["gates"][gate.gate_id] = {
+                "oracle_id": gate.oracle_id,
+                "required": gate.required,
+                "passed": gate_passed,
+                "reference": _comparison_summary(reference_comparison),
+                "candidate": _comparison_summary(candidate_comparison),
+            }
+            if not gate_passed:
+                if gate.required:
+                    all_passed = False
+                failed_path = failed_path or reference_comparison.failed_path or candidate_comparison.failed_path
+                for subject, result in (("reference", reference_comparison), ("candidate", candidate_comparison)):
+                    if not result.passed:
+                        diagnostics.extend(
+                            {"gate_id": gate.gate_id, "oracle_id": gate.oracle_id, "subject": subject, **item}
+                            for item in result.diagnostics
+                        )
+        return ComparisonResult(all_passed, "oracle_gates", metrics, tuple(diagnostics[:8]), failed_path)
 
     @staticmethod
     def _exception_result(error: Exception, case: CaseSpec, fingerprint: str, summary: Mapping[str, object], stage: str, reproduction: str) -> CorrectnessResult:
@@ -156,3 +251,18 @@ class CorrectnessEvaluator:
         else:
             status = "error"
         return CorrectnessResult(status, case.case_id, case.seed, fingerprint, GENERATOR_VERSION, summary, None, exception_diagnostic(error, stage=stage, reproduction=reproduction))
+
+
+class _OracleStageError(Exception):
+    def __init__(self, stage: str) -> None:
+        super().__init__(stage)
+        self.stage = stage
+
+
+def _comparison_summary(result: ComparisonResult) -> dict[str, object]:
+    return {
+        "passed": result.passed,
+        "comparator": result.comparator,
+        "metrics": result.metrics,
+        "failed_path": result.failed_path,
+    }

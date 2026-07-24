@@ -30,6 +30,7 @@ def write_reference(repository: Path, operator_id: str = OPERATOR_ID) -> Path:
         f"""schema_version: 1
 operator_id: {operator_id}
 contract_version: 1
+contract_status: formal
 description: CPU fixture
 reference_entrypoint: implementation:operator
 spec_entrypoint: spec:SPEC
