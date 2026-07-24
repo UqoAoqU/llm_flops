@@ -6,13 +6,12 @@ import deep_gemm
 def operator(
     activation,
     activation_scale,
-    activation_scale_aligned,
     weight,
     weight_scale,
     output,
 ):
     deep_gemm.fp8_gemm_nt(
-        (activation, activation_scale_aligned),
+        (activation, activation_scale),
         (weight, weight_scale),
         output,
     )

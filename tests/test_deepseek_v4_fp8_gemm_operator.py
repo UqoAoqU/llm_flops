@@ -22,13 +22,10 @@ from deepseek_v4_benchmark import decode_adapters, graph_ms, prefill_adapters
 
 ROOT = Path(__file__).resolve().parents[1]
 OPERATOR_ID = "deepseek_v4_fp8_gemm_nt"
-CANDIDATE_ID = "pytorch_dequant__20260717T040000Z__f2d56382"
-CONTROL_CANDIDATE_ID = "test_impl__20260717T061620Z__cfb18306"
+CANDIDATE_ID = "pytorch_dequant__20260724T040000Z__bcaf88fe"
+DEEPGEMM_CONTROL_ID = "test_impl__20260724T044500Z__e849d429"
 REFERENCE_ROOT = ROOT / "operators" / "references" / OPERATOR_ID
 CANDIDATE_ROOT = ROOT / "operators" / "candidates" / OPERATOR_ID / CANDIDATE_ID
-CONTROL_CANDIDATE_ROOT = (
-    ROOT / "operators" / "candidates" / OPERATOR_ID / CONTROL_CANDIDATE_ID
-)
 
 
 def load(path: Path, attribute: str):
@@ -74,9 +71,9 @@ class DeepSeekV4Fp8GemmContractTests(unittest.TestCase):
         self.assertEqual(manifest.device_types, ("cuda",))
         self.assertEqual(manifest.performance.graph_mode, "enabled")
         self.assertEqual(manifest.performance.inner_iterations, 20)
-        self.assertEqual(
-            (manifest.correctness.rtol, manifest.correctness.atol), (0.01, 0.1)
-        )
+        self.assertEqual(manifest.contract_version, 3)
+        self.assertEqual(manifest.correctness.default_comparator, "calc_diff")
+        self.assertEqual((manifest.correctness.rtol, manifest.correctness.atol), (0.0, 0.0))
         snapshot = FilesystemRegistry(ROOT).discover()
         self.assertFalse(
             [issue for issue in snapshot.issues if OPERATOR_ID in str(issue.path)],
@@ -86,20 +83,19 @@ class DeepSeekV4Fp8GemmContractTests(unittest.TestCase):
             {case.case_id for case in load_operator_cases(snapshot, OPERATOR_ID)},
             {case.case_id for case in SPEC.cases()},
         )
+        gate = SPEC.correctness_gates(next(iter(SPEC.cases())))[0]
+        self.assertEqual((gate.gate_id, gate.oracle_id), ("end_to_end_full_precision", "full_precision_bf16"))
+        self.assertEqual(gate.comparator.max_diff, 1e-3)
+        self.assertEqual(gate.comparator.output_paths, ("output",))
+        self.assertIn("sgl-project/DeepGEMM@731e7c7a97d269e4b9f482ea18d0e709a948f293", gate.comparator.source)
+        self.assertIn("tests/test_fp8_fp4.py::test_gemm", gate.comparator.source)
 
     def test_cases_cover_smoke_boundary_and_real_legacy_shape(self):
-        smoke_shapes = {
-            tuple(case.symbols[name] for name in ("m", "k", "n"))
-            for case in SPEC.cases()
-            if "smoke" in case.tags
-        }
-        self.assertEqual(smoke_shapes, {(16, 128, 128), (16, 256, 256)})
-        by_tag = {
-            tag: case
-            for case in SPEC.cases()
-            for tag in case.tags
-            if tag != "smoke"
-        }
+        by_tag = {tag: case for case in SPEC.cases() for tag in case.tags}
+        self.assertEqual(
+            tuple(by_tag["smoke"].symbols[name] for name in ("m", "k", "n")),
+            (16, 128, 128),
+        )
         self.assertEqual(
             tuple(by_tag["boundary"].symbols[name] for name in ("m", "k", "n")),
             (1, 128, 128),
@@ -124,6 +120,8 @@ class DeepSeekV4Fp8GemmContractTests(unittest.TestCase):
                     expected.append(
                         {
                             "phase": phase,
+                            "quant_profiles": ("mxfp4", "fp8_mxfp8"),
+                            "kind": "fp8",
                             "adapter_name": adapter.name,
                             "backend": adapter.backend,
                             "instances": adapter.instances,
@@ -149,11 +147,14 @@ class DeepSeekV4Fp8GemmContractTests(unittest.TestCase):
             m, k, n = (int(case.symbols[name]) for name in ("m", "k", "n"))
             self.assertEqual((k % 128, n % 128), (0, 0))
             cost = SPEC.cost_model(case)
+            scale_groups = k // 128
+            aligned_m = (m + 3) // 4 * 4
+            aligned_scale_groups = (scale_groups + 3) // 4 * 4
             expected_bytes = (
                 m * k
                 + n * k
-                + 4 * m * (k // 128)
-                + 4 * (n // 128) * (k // 128)
+                + aligned_m * aligned_scale_groups
+                + n * aligned_scale_groups
                 + 2 * m * n
             )
             self.assertEqual(cost["flops"], 2 * m * k * n)
@@ -162,21 +163,32 @@ class DeepSeekV4Fp8GemmContractTests(unittest.TestCase):
         source = (REFERENCE_ROOT / "spec.py").read_text(encoding="utf-8")
         self.assertIn('FP8_DTYPE = "float8_e4m3fn"', source)
         self.assertIn('OUTPUT_DTYPE = "bfloat16"', source)
-        self.assertIn("get_mn_major_tma_aligned_tensor", source)
+        self.assertIn("sglang_per_token_group_quant_fp8", source)
+        self.assertIn("column_major_scales=True", source)
+        self.assertIn("scale_tma_aligned=True", source)
+        self.assertIn("scale_ue8m0=True", source)
+        self.assertIn("quant_weight_ue8m0", source)
+        self.assertIn("transform_scale_ue8m0", source)
+        self.assertNotIn("get_mn_major_tma_aligned_tensor", source)
+        self.assertNotIn("activation_scale_aligned", source)
+        self.assertIn("UPSTREAM_CONTRACT", source)
+        self.assertIn("full_precision_bf16", source)
 
-    def test_candidate_expands_logical_scales_without_deepgemm(self):
+    def test_candidate_unpacks_production_ue8m0_scales_without_deepgemm(self):
         try:
             import torch
         except ImportError:
             self.skipTest("torch unavailable")
         activation = torch.ones((1, 128), dtype=torch.float32)
         weight = torch.ones((128, 128), dtype=torch.float32)
-        activation_scale = torch.tensor([[2.0]], dtype=torch.float32)
-        weight_scale = torch.tensor([[2.0]], dtype=torch.float32)
+        # UE8M0 stores the FP32 exponent byte. The first byte of this packed
+        # int32 is 0x80, which decodes to a scale of 2.0; the other three
+        # bytes are K-padding and are ignored for K=128.
+        activation_scale = torch.tensor([[0x80]], dtype=torch.int32)
+        weight_scale = torch.full((128, 1), 0x80, dtype=torch.int32)
         output = torch.empty((1, 128), dtype=torch.bfloat16)
         observed = CANDIDATE(
             activation,
-            activation_scale,
             activation_scale,
             weight,
             weight_scale,
@@ -209,6 +221,27 @@ class DeepSeekV4Fp8GemmContractTests(unittest.TestCase):
             for node in reference_tree.body
             if isinstance(node, ast.FunctionDef) and node.name == "operator"
         )
+        expected_parameters = [
+            "activation",
+            "activation_scale",
+            "weight",
+            "weight_scale",
+            "output",
+        ]
+        self.assertEqual(
+            [argument.arg for argument in reference_operator.args.args],
+            expected_parameters,
+        )
+        candidate_tree = ast.parse(candidate_source)
+        candidate_operator = next(
+            node
+            for node in candidate_tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == "operator"
+        )
+        self.assertEqual(
+            [argument.arg for argument in candidate_operator.args.args],
+            expected_parameters,
+        )
         self.assertEqual(
             [type(statement) for statement in reference_operator.body],
             [ast.Expr, ast.Return],
@@ -220,26 +253,30 @@ class DeepSeekV4Fp8GemmContractTests(unittest.TestCase):
         self.assertEqual(source.parts[-2:], result.parts[-2:])
         self.assertEqual(candidate_root, source)
 
-    def test_reference_copy_control_candidate_is_discoverable_and_mirrored(self):
-        reference_source = (REFERENCE_ROOT / "implementation.py").read_bytes()
-        candidate_source = (
-            CONTROL_CANDIDATE_ROOT / "implementation.py"
-        ).read_bytes()
-        self.assertEqual(candidate_source, reference_source)
-        snapshot = FilesystemRegistry(ROOT).discover()
-        candidate = next(
-            item
-            for item in snapshot.candidates[OPERATOR_ID]
-            if item.implementation_id == CONTROL_CANDIDATE_ID
+        control_root = (
+            ROOT
+            / "operators"
+            / "candidates"
+            / OPERATOR_ID
+            / DEEPGEMM_CONTROL_ID
+        )
+        control_tree = ast.parse(
+            (control_root / "implementation.py").read_text(encoding="utf-8")
+        )
+        control_operator = next(
+            node
+            for node in control_tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == "operator"
         )
         self.assertEqual(
-            candidate.source_hash, compute_source_hash(CONTROL_CANDIDATE_ROOT)
+            [argument.arg for argument in control_operator.args.args],
+            expected_parameters,
         )
-        source = candidate_source_path(ROOT, OPERATOR_ID, CONTROL_CANDIDATE_ID)
-        result = candidate_result_path(
-            ROOT / "results", OPERATOR_ID, CONTROL_CANDIDATE_ID
+        self.assertTrue(
+            compute_source_hash(control_root).startswith(
+                DEEPGEMM_CONTROL_ID.rsplit("__", 1)[1]
+            )
         )
-        self.assertEqual(source.parts[-2:], result.parts[-2:])
 
     def test_documented_cli_commands_have_nonempty_dry_run_plans(self):
         commands = (
@@ -258,7 +295,7 @@ class DeepSeekV4Fp8GemmContractTests(unittest.TestCase):
                 "--tag", "representative", "--dry-run",
             ),
         )
-        expected_jobs = (2, 12, 3)
+        expected_jobs = (1, 9, 3)
         for arguments, count in zip(commands, expected_jobs):
             with self.subTest(arguments=arguments):
                 stdout, stderr = io.StringIO(), io.StringIO()
@@ -271,7 +308,7 @@ class DeepSeekV4Fp8GemmContractTests(unittest.TestCase):
 
 @unittest.skipUnless(
     os.environ.get("BENCHMARK_ENGINE_RUN_GPU_INTEGRATION") == "1",
-    "set BENCHMARK_ENGINE_RUN_GPU_INTEGRATION=1 on the B200 host",
+    "set BENCHMARK_ENGINE_RUN_GPU_INTEGRATION=1 on an SM100/SM103 host",
 )
 class DeepSeekV4Fp8GemmGpuIntegrationTests(unittest.TestCase):
     @classmethod
@@ -288,30 +325,32 @@ class DeepSeekV4Fp8GemmGpuIntegrationTests(unittest.TestCase):
 
     def test_runtime_input_shapes_scale_layout_and_dtypes(self):
         import torch
+        from sglang.srt.layers.deep_gemm_wrapper import DEEPGEMM_SCALE_UE8M0
 
         case = next(case for case in SPEC.cases() if "smoke" in case.tags)
         generator = torch.Generator(device="cuda:0")
         generator.manual_seed(case.seed)
         context = type("Context", (), {"cuda": {"cuda:0": generator}})()
         bundle = SPEC.make_inputs(case, context)
-        activation, logical, aligned, weight, weight_scale, output = bundle.args
+        activation, activation_scale, weight, weight_scale, output = bundle.args
+        self.assertIn(torch.cuda.get_device_capability(), ((10, 0), (10, 3)))
+        self.assertTrue(DEEPGEMM_SCALE_UE8M0)
         self.assertEqual((activation.shape, weight.shape, output.shape), ((16, 128), (128, 128), (16, 128)))
-        self.assertEqual((logical.shape, weight_scale.shape), ((16, 1), (1, 1)))
+        self.assertEqual(
+            (activation_scale.shape, weight_scale.shape),
+            ((16, 1), (128, 1)),
+        )
         self.assertEqual(activation.dtype, torch.float8_e4m3fn)
         self.assertEqual(weight.dtype, torch.float8_e4m3fn)
         self.assertEqual(output.dtype, torch.bfloat16)
-        self.assertEqual(logical.dtype, torch.float32)
-        self.assertEqual(weight_scale.dtype, torch.float32)
-        self.assertTrue(torch.equal(logical, aligned))
-        self.assertNotEqual(logical.data_ptr(), aligned.data_ptr())
-        scales = torch.cat((logical.reshape(-1), weight_scale.reshape(-1)))
-        self.assertTrue(torch.isfinite(scales).all())
-        self.assertTrue((scales > 0).all())
-        mantissas, _ = torch.frexp(scales)
-        self.assertTrue(torch.equal(mantissas, torch.full_like(mantissas, 0.5)))
-        scale_bits = scales.contiguous().view(torch.int32)
-        self.assertTrue(torch.equal(scale_bits & 0x007FFFFF, torch.zeros_like(scale_bits)))
-        self.assertGreaterEqual(torch.unique(scales).numel(), 2)
+        self.assertEqual(activation_scale.dtype, torch.int32)
+        self.assertEqual(weight_scale.dtype, torch.int32)
+        self.assertEqual(activation_scale.stride(), (1, 16))
+        self.assertEqual(weight_scale.stride(), (1, 128))
+        self.assertEqual(activation_scale.untyped_storage().nbytes(), 64)
+        self.assertEqual(weight_scale.untyped_storage().nbytes(), 512)
+        self.assertIn("full_precision_activation", bundle.observed_state)
+        self.assertIn("full_precision_weight", bundle.observed_state)
 
     def test_optimized_baseline_candidate_and_wrong_fixture_on_all_cases(self):
         evaluator = CorrectnessEvaluator()
@@ -327,6 +366,9 @@ class DeepSeekV4Fp8GemmGpuIntegrationTests(unittest.TestCase):
                     cuda_devices=("cuda:0",),
                 )
                 self.assertEqual(result.status, "pass", result.to_dict())
+                gate = result.comparison.metrics["gates"]["end_to_end_full_precision"]
+                self.assertTrue(gate["reference"]["passed"])
+                self.assertTrue(gate["candidate"]["passed"])
 
         smoke = next(case for case in SPEC.cases() if "smoke" in case.tags)
         wrong = evaluator.evaluate(

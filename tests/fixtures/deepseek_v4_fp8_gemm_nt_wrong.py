@@ -4,11 +4,10 @@
 def operator(
     activation,
     activation_scale,
-    activation_scale_aligned,
     weight,
     weight_scale,
     output,
 ):
-    del activation, activation_scale, activation_scale_aligned, weight, weight_scale
+    del activation, activation_scale, weight, weight_scale
     output.zero_()
     return output
